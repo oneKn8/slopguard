@@ -8,7 +8,14 @@ Source of truth for the README, Devpost submission, impact statement, mod outrea
 
 ## One-line pitch
 
-> **Slopguard is an explainable triage layer for Reddit mods — catches AI-generated content, spam, scams, and coordinated inauthentic behavior with multi-signal scoring, confidence-based review tiers, verify-author appeals, and mod-collision prevention. Human judgment preserved by default.**
+> **Slopguard is an explainable triage layer for Reddit mods — surfacing likely synthetic content, spam, scams, and coordinated inauthentic behavior with multi-signal scoring, confidence-based review tiers, verify-author appeals, and mod-collision prevention. Human judgment is preserved by default.**
+
+## The wedge
+
+> **Stop AI asks: "Is this AI?"**
+> **Slopguard asks: "What should mods do with this suspicious item, and how do we handle it fairly?"**
+
+That's the whole product.
 
 ## What it is
 
@@ -29,8 +36,8 @@ A documented, dated problem set with primary sources:
 
 - **AI-generated content is a fast-growing moderation pain in 2026.** r/programming temporarily banned LLM content as triage (April 2026, Tom's Hardware). One r/AmItheAsshole moderator estimated up to 50% of submissions may be AI-generated or edited (WinBuzzer, December 2025).
 - **74.5% of moderators experience modqueue collisions** under volume (Bajpai & Chandrasekharan, CHI 2026, n=110 mods, arxiv 2509.07314).
-- **AI detectors have a 61.22% false-positive rate on non-native English** (Liang et al, Patterns 2023, Stanford HAI). Fixed-threshold autopilot silently penalizes innocent users.
-- **AutoMod is regex-only** — cannot evaluate content semantically.
+- **AI detectors have a 61.22% false-positive rate on non-native English** (Liang et al, Patterns 2023, Stanford HAI). Fixed-threshold autopilot can penalize innocent users without enough context, especially when there is no built-in verification path.
+- **AutoMod is rule/config based** and cannot reliably evaluate semantic synthetic-content patterns by itself.
 - **Toolbox is browser-only**, no mobile, no AI awareness, aging codebase.
 
 ## How it's different from Stop AI
@@ -60,7 +67,7 @@ Seven signal layers, all local-first (no HTTP/LLM required for MVP):
 | Signal | What it catches | Cost |
 |---|---|---|
 | **Structural** | AI-output patterns — em-dash density, formulaic phrases, sentence-length burstiness, markdown heading patterns | Free, ~5ms |
-| **Behavioral** | New / low-karma accounts, cross-posting velocity, posting cadence (catches AI bots AND spam bots) | Free, ~10ms |
+| **Behavioral** | Account / submission metadata where exposed by Devvit — new accounts, low karma, cross-posting velocity, posting cadence (helps surface AI bots and spam bots alike) | Free, ~10ms |
 | **Promo** | Affiliate links, URL shorteners, "DM me for…" patterns, crypto wallet addresses, common pump/promo phrases | Free, ~5ms |
 | **Contact-leak** | Phone numbers, Telegram handles, WhatsApp links, personal emails in body (high spam correlation) | Free, ~5ms |
 | **Duplication** | Hash match against prior submissions across the sub (catches AI spam AND copy-paste spam) | Free, ~10ms |
@@ -81,6 +88,14 @@ Final score = weighted blend of local signals. **MVP ships without any HTTP fetc
 - **Modnote integration** — confirmed cases get notes for cross-mod consistency
 - **Mobile parity** — works in Reddit's mobile app (Toolbox doesn't)
 - **Reversible moderation** — every action is logged for easy undo
+
+## Future roadmap (V2+)
+
+- **LLM ensemble opt-in escalation** (Gemini + Claude + GPT, weighted fusion, disagreement signal)
+- **LLM-aided reply parsing** for verify-author workflow (auto-classify legitimate vs. evasive responses)
+- **Image AI detection** via Gemini vision
+- **OCR for text-in-images** (hidden promo/contact info)
+- **Cross-sub federation** — opt-in shared bad-actor lists across participating subs (requires trust + privacy framework before launch)
 
 ## Honesty stance
 
