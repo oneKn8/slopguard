@@ -1,6 +1,6 @@
 # Slopguard — Product Definition
 
-**Canonical product description, locked 2026-05-12.**
+**Canonical product description, locked 2026-05-12 (v2 — fact-check pass complete).**
 
 Source of truth for the README, Devpost submission, impact statement, mod outreach DMs, and the UTD GitHub issue. If anything elsewhere conflicts with this doc, this wins.
 
@@ -8,92 +8,95 @@ Source of truth for the README, Devpost submission, impact statement, mod outrea
 
 ## One-line pitch
 
-> Graduated-autopilot AI-content triage for Reddit mod queues — multi-signal scoring with confidence tiers, verify-author appeals, mod-collision prevention, and per-sub policy modes. Set thresholds once, walk away with confidence.
+> **Slopguard is an explainable triage layer for Reddit mods — catches AI-generated content, spam, scams, and coordinated inauthentic behavior with multi-signal scoring, confidence-based review tiers, verify-author appeals, and mod-collision prevention. Human judgment preserved by default.**
 
 ## What it is
 
-Slopguard is a Devvit-native moderation tool that scores incoming posts and comments for AI-generated patterns using a combination of structural, behavioral, duplication, history, and (optionally) LLM signals. Instead of a single binary threshold, Slopguard routes items into graduated autopilot tiers so mods can set-and-forget without the false-positive risk of black-box detection.
+Slopguard is a Devvit-native moderation tool that scores incoming posts and comments for synthetic-content and low-quality-submission patterns using a combination of structural, behavioral, promo/contact-leak, duplication, history, and (optionally) LLM signals. It covers AI-generated content, karma-farm spam, affiliate/promo accounts, scam patterns, and dupe-content bots — all from the same multi-signal architecture. Instead of a single binary threshold, Slopguard routes items into confidence tiers so mods configure their sub's policy once and only see the cases that need their attention.
 
-| Confidence | Default action | Mod involvement |
+| Confidence | Default action (Advisory mode) | If Strict mode is enabled |
 |---|---|---|
-| 92%+ | Auto-remove with audit log | None |
-| 75–92% | Auto-modmail asking author to explain their process; post stays visible until reply | None (Slopguard reads the reply, escalates if it's another AI block) |
-| 50–75% | Flag to mod queue with explainability panel | One click — approve / remove / lock |
-| < 50% | Ignore | Not surfaced |
+| 92%+ | Surface to mod queue marked "high confidence" with full explainability | Auto-filter or remove (mod-configured) |
+| 75–92% | Verify-author workflow: auto-modmail asks author to explain, reply attached to review card | Same |
+| 50–75% | Flag to mod queue with explainability panel | Same |
+| < 50% | Ignore (not surfaced) | Same |
 
-All thresholds and policy modes are per-sub configurable.
+All thresholds and policy modes are per-sub configurable. **Default mode is Advisory** — Slopguard never removes anything by itself unless the mod team explicitly opts into Strict mode. Configure once, surface only what needs attention.
 
 ## What it solves
 
 A documented, dated problem set with primary sources:
 
-- **AI-content flood is mods' #1 reported pain in 2026.** r/programming temporarily banned LLM content as triage (April 2026, Tom's Hardware). One r/AmItheAsshole mod estimated up to 50% of submissions may be AI-generated or edited (WinBuzzer, Dec 2025).
+- **AI-generated content is a fast-growing moderation pain in 2026.** r/programming temporarily banned LLM content as triage (April 2026, Tom's Hardware). One r/AmItheAsshole moderator estimated up to 50% of submissions may be AI-generated or edited (WinBuzzer, December 2025).
 - **74.5% of moderators experience modqueue collisions** under volume (Bajpai & Chandrasekharan, CHI 2026, n=110 mods, arxiv 2509.07314).
-- **AI detectors have a 61.3% false-positive rate on non-native English** (Liang et al, Patterns 2023, Stanford HAI). Autopilot at a fixed threshold silently bans innocent users.
-- **AutoMod is regex-only** — cannot detect AI submissions at all.
+- **AI detectors have a 61.22% false-positive rate on non-native English** (Liang et al, Patterns 2023, Stanford HAI). Fixed-threshold autopilot silently penalizes innocent users.
+- **AutoMod is regex-only** — cannot evaluate content semantically.
 - **Toolbox is browser-only**, no mobile, no AI awareness, aging codebase.
 
 ## How it's different from Stop AI
 
-Stop AI (developers.reddit.com/apps/stop-ai, 431 communities, v1.2.0) is the incumbent — academic detection algorithms (Binoculars, DetectGPT, GLTR, TypeTruth), one threshold, autopilot mode, gamification.
+[Stop AI](https://developers.reddit.com/apps/stop-ai) (431 communities, v1.2.0) is the incumbent in this space — academic detection algorithms (Binoculars, DetectGPT, GLTR, TypeTruth), one threshold (50%), and optional autopilot enforcement. Stop AI is **detection-first**.
 
-Slopguard is for mods who want autopilot WITHOUT the binary failure mode:
+Slopguard is **workflow-first**: confidence bands, review coordination, author verification, and reversible moderation decisions. The two products solve adjacent problems for different mod philosophies.
 
 | | Stop AI | Slopguard |
 |---|---|---|
-| Method | 4 academic detection algorithms (statistical) | Multi-signal triage: structural + behavioral + duplication + history + optional multi-LLM ensemble |
+| Approach | Detection-first — academic algorithms producing a score | Workflow-first — multi-signal triage with explainable tiers |
 | Threshold model | Fixed 50% binary | Graduated tiers (configurable per sub) |
-| False positive handling | User reports via Reddit native | Verify-author modmail before removal — fair to non-native English / dyslexia / translation users |
-| Explainability | Score from algorithm | Per-signal panel — flagged because: em-dash density 3.2/1k, 1-day account, dup hash, LLM 78% |
-| Mod-collision prevention | None | Real-time lock — "u/X is reviewing this" badge |
-| Per-sub policy modes | One mode (autopilot) | Three modes (Advisory / Verify / Strict) |
+| Default mode | Detection + optional autopilot enforcement | Advisory — surface to queue, mod decides |
+| False-positive handling | Mod adjusts threshold; user files Reddit native report | Verify-author modmail before action — fair to non-native English, dyslexia, translation users |
+| Explainability | Score from algorithm | Per-signal panel: "flagged because em-dash density 3.2/1k chars, 1-day account, duplicate body hash" |
+| Mod-collision prevention | None | Real-time "u/X is reviewing this" lock |
+| Per-sub policy modes | One mode (autopilot configurable) | Three (Advisory / Verify / Strict) |
 | Aesthetic | XP, ranks, badges | Professional mod tooling, no gamification |
-| Open-source | Unknown | MIT |
-| Stack | Detection-first | Workflow-first |
+| Open-source | Unknown | MIT, https://github.com/oneKn8/slopguard |
 
-**Position:** Slopguard works standalone or alongside Stop AI as the workflow + fairness layer. Stop AI replaces mod judgment; Slopguard amplifies it.
+**Position:** Slopguard works standalone or alongside Stop AI as the workflow + fairness + collision-safety layer.
 
 ## How it works (technical)
 
-Five signal layers, all local-first (no HTTP/LLM required for MVP):
+Seven signal layers, all local-first (no HTTP/LLM required for MVP):
 
-| Signal | What it measures | Cost |
+| Signal | What it catches | Cost |
 |---|---|---|
-| **Structural** | Em-dash density, formulaic phrase frequency, sentence-length burstiness, markdown heading patterns | Free, ~5ms |
-| **Behavioral** | Account age, karma curve, cross-posting velocity, posting pattern | Free, ~10ms |
-| **Duplication** | Text-hash match against prior submissions across the sub | Free, ~10ms |
-| **History** | This user's prior flag count, prior confirmed-AI rate | Free, ~5ms |
-| **LLM ensemble** (opt-in) | Gemini 2.5 Flash + Claude Haiku 4.5 + GPT-4o-mini, weighted fusion, disagreement signal | $0.0004/item, ~800ms |
+| **Structural** | AI-output patterns — em-dash density, formulaic phrases, sentence-length burstiness, markdown heading patterns | Free, ~5ms |
+| **Behavioral** | New / low-karma accounts, cross-posting velocity, posting cadence (catches AI bots AND spam bots) | Free, ~10ms |
+| **Promo** | Affiliate links, URL shorteners, "DM me for…" patterns, crypto wallet addresses, common pump/promo phrases | Free, ~5ms |
+| **Contact-leak** | Phone numbers, Telegram handles, WhatsApp links, personal emails in body (high spam correlation) | Free, ~5ms |
+| **Duplication** | Hash match against prior submissions across the sub (catches AI spam AND copy-paste spam) | Free, ~10ms |
+| **History** | User prior-flag count and confirmed-flag rate | Free, ~5ms |
+| **LLM ensemble** (V2, opt-in escalation) | Gemini 2.5 Flash + Claude Haiku 4.5 + GPT-4o-mini, weighted fusion, disagreement signal | $0.0004/item, ~800ms |
 
-Final score = weighted blend. LLM ensemble is opt-in escalation — Slopguard's MVP works fully without HTTP fetch approval, ships faster, no premium-feature review required. Mods enable LLM when they want max accuracy on uncertain cases.
+Final score = weighted blend of local signals. **MVP ships without any HTTP fetch** — no Devvit premium-feature review needed for the core product. LLM ensemble is a V2 opt-in feature for mods who want extra signal on uncertain cases; that's the path that requires HTTP allowlist approval.
 
-**Cost discipline:** karma threshold gating, approved-user skip, account-age skip, daily spend cap, mod-skip. Gemini free tier covers most subs at $0/month.
+**Cost discipline (when LLM is enabled):** karma threshold gating, approved-user skip, account-age skip, daily spend cap, mod-skip. Gemini free tier covers most subs at $0/month.
 
 ## What you get as a mod
 
-- Per-signal explainability on every flag — never a black box
-- Verify-author workflow — auto-modmail asks the user to explain before removal (fair to non-native speakers; research-backed approach via AppealMod, arxiv 2301.07163)
-- Real-time mod-collision lock — "u/X is reviewing this" prevents two mods acting on the same item
-- Per-sub policy modes (Advisory / Verify / Strict) — sub rules drive enforcement style
-- Daily metrics post — items scored, flagged, removed, time saved, API spend
-- Modnote integration — confirmed AI users get notes for cross-mod consistency
-- Mobile parity — works in Reddit's mobile app (Toolbox doesn't)
-- Cross-sub federation (opt-in V2) — shared bad-actor list across participating subs
+- **Per-signal explainability** on every flag — never a black box
+- **Verify-author workflow** — auto-modmail asks the user to explain; reply is attached to the review card so mods see context in one place (research-backed via [AppealMod, arxiv 2301.07163](https://arxiv.org/abs/2301.07163))
+- **Real-time mod-collision lock** — "u/X is reviewing this" prevents two mods acting on the same item (solves the CHI 2026 74.5% pain directly)
+- **Per-sub policy modes** (Advisory default / Verify / Strict)
+- **Daily metrics post** — items scored, flagged, removed, reversed, time saved
+- **Modnote integration** — confirmed cases get notes for cross-mod consistency
+- **Mobile parity** — works in Reddit's mobile app (Toolbox doesn't)
+- **Reversible moderation** — every action is logged for easy undo
 
-## Honesty stance (the thing competitors won't admit)
+## Honesty stance
 
-No AI detector is perfectly accurate. Stanford documented 61.3% false-positive rates on non-native English. Stop AI's autopilot at 50% threshold means real people get wrongly banned every day.
+No AI detector is perfectly accurate. Stanford documented a 61.22% false-positive rate on TOEFL essays. Fixed-threshold autopilot — without an appeals path — risks silently penalizing innocent users, especially non-native English speakers.
 
 Slopguard is built around this reality:
 
-- LLM ensemble is one signal among five, not the verdict
-- Multi-model disagreement is surfaced explicitly — mods see the doubt
-- Conservative defaults — auto-remove only at 92%+ confidence
-- Verify-author safety net handles the 75–92% band fairly
-- Prompts explicitly de-emphasize surface fluency so non-native English isn't penalized
-- Mod judgment is the final authority for ambiguous cases
+- **Default mode is Advisory** — Slopguard never removes by itself unless Strict mode is explicitly enabled
+- **LLM ensemble is opt-in V2**, not core to MVP
+- **Multi-model disagreement is surfaced explicitly** when LLM is enabled
+- **Verify-author safety net** handles the 75–92% band fairly
+- **Prompts (when LLM is enabled) explicitly de-emphasize surface fluency** so non-native English isn't penalized
+- **Every action is reversible and logged**
+- **Mod judgment is the final authority** for any ambiguous case
 
-This is defensible to the most skeptical judge or mod — including non-native speakers who'd be Stop AI's silent false-positive victims.
+This is the version we can defend to the most skeptical judge or mod — including non-native speakers who would be most at risk under fixed-threshold autopilot tools.
 
 ## What Slopguard is NOT
 
@@ -102,14 +105,14 @@ This is defensible to the most skeptical judge or mod — including non-native s
 - Not a black box — every score is explainable down to the signal level
 - Not adversarial-proof — no detector is, and we don't pretend otherwise
 - Not a replacement for human judgment — it scaffolds it, doesn't substitute
+- Not in competition with Stop AI — they're detection-first, we're workflow-first
 
 ## Target prizes
 
-- Best New Mod Tool ($10K) — differentiated tech (multi-signal triage, graduated autopilot, collision prevention)
-- Moderators' Choice ($10K) — fair, explainable, mod-respecting design wins mod testimonials
-- Honorable Mention ($1K) — fallback for build quality alone
-- Reddit Developer Funds 2026 — passive tail revenue at 250+ qualified installs in 200+ member subs
+- **Best New Mod Tool ($10,000)** — differentiated workflow (multi-signal triage, graduated review tiers, collision prevention)
+- **Moderators' Choice ($10,000)** — fair, explainable, mod-respecting design wins mod testimonials
+- **Honorable Mention ($1,000)** — fallback for build quality
 
 ## Author
 
-Shifat Islam Santo, UTD CS '27 — github.com/oneKn8, u/shifatsanto75
+Shifat Islam Santo, UTD CS '27 — [github.com/oneKn8](https://github.com/oneKn8), u/shifatsanto75
