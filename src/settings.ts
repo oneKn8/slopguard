@@ -35,6 +35,9 @@ export enum AppSetting {
 
   // Metrics post
   EnableDailyMetricsPost = "enableDailyMetricsPost",
+
+  // Discord webhook (optional)
+  DiscordWebhookUrl = "discordWebhookUrl",
 }
 
 export function getPolicyMode(settings: SettingsValues): PolicyMode {
@@ -235,6 +238,21 @@ export function buildSettings(): SettingsFormField[] {
           name: AppSetting.EnableDailyMetricsPost,
           label: "Post daily metrics summary (mod-only sticky)",
           defaultValue: true,
+        },
+      ],
+    },
+    {
+      type: "group",
+      label: "Discord (optional)",
+      fields: [
+        {
+          type: "string",
+          name: AppSetting.DiscordWebhookUrl,
+          label: "Discord webhook URL",
+          helpText:
+            "If set, every first-flag event is posted as an embed to this webhook. Get one in your Discord server → Channel Settings → Integrations → Webhooks.",
+          isSecret: true,
+          scope: "installation",
         },
       ],
     },

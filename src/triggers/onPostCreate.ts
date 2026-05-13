@@ -12,6 +12,7 @@ import { shouldSkipUser } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
 import { sendVerifyDm } from "../lib/verifyAuthor.js";
 import { pushToQueue } from "../customPost/queue.js";
+import { notifyDiscord } from "../lib/discord.js";
 import { AppSetting, getPolicyMode } from "../settings.js";
 
 export async function onPostCreate(
@@ -68,6 +69,7 @@ export async function onPostCreate(
       await bumpDailyMetrics(context, { flagged: 1 });
       await incrUserFlag(context, author);
       await pushToQueue(context, event.post.id);
+      void notifyDiscord(context, settings, score);
     }
 
     const mode = getPolicyMode(settings);
