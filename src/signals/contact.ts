@@ -10,8 +10,12 @@ import type { SignalResult } from "./types.js";
  * a low weight. Multiple contact channels in one post is the strong signal.
  */
 
-const TELEGRAM_HANDLE = /(^|[^a-z0-9_])@[A-Za-z][A-Za-z0-9_]{4,31}\b/;
 const TELEGRAM_LINK = /\b(?:t\.me|telegram\.me|telegram\.org)\/[A-Za-z0-9_+/?=&-]+/i;
+// A bare "@username" matches Reddit user mentions far more often than Telegram,
+// so we only accept handles when an explicit Telegram context word is present.
+const TELEGRAM_CONTEXT = /\btelegram\b/i;
+const TELEGRAM_HANDLE_NEAR_CONTEXT =
+  /\btelegram\b[^\n]{0,40}@[A-Za-z][A-Za-z0-9_]{4,31}\b|@[A-Za-z][A-Za-z0-9_]{4,31}\b[^\n]{0,40}\btelegram\b/i;
 const WHATSAPP_LINK = /\b(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\/[A-Za-z0-9_+/?=&-]+/i;
 const WHATSAPP_MENTION = /\bwhats?\s?app\b/i;
 const SIGNAL_LINK = /\bsignal\.me\/#p\/[A-Za-z0-9_+-]+/i;
@@ -21,15 +25,15 @@ const DISCORD_INVITE = /\b(?:discord\.gg|discord\.com\/invite)\/[A-Za-z0-9_-]+/i
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const NOREPLY_PARTS = /(noreply|no-reply|donotreply|support|admin|info|hello|contact|hr|jobs|press|sales)@/i;
 
-// Phone numbers — international and US-style. Require >=10 digits total.
-const PHONE_RE = /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,4}\d{2,4}/g;
+// Phone numbers — require a strong shape (+country code OR parenthesized area
+// code) so ISBN/SKU/order-number patterns don't match. The previous loose
+// pattern caught long product IDs and base58 substrings.
+const PHONE_RE =
+  /(?:\+\d{1,3}[\s.-]?\d[\d\s.-]{7,15}\d)|(?:\(\d{2,4}\)[\s.-]?\d{2,4}[\s.-]?\d{3,4})/g;
 
 function isLikelyPhone(match: string): boolean {
   const digits = match.replace(/\D/g, "");
   if (digits.length < 10 || digits.length > 15) return false;
-  // Avoid years, dollar amounts, IDs — require either a +country prefix, a
-  // parenthesized group, or at least one separator.
-  if (/^\d+$/.test(match.trim())) return false;
   return true;
 }
 
@@ -53,13 +57,17 @@ export function contactSignal(input: ContactInput): SignalResult {
   let score = 0;
   let channels = 0;
 
-  // Telegram
-  const tgHandle = text.match(TELEGRAM_HANDLE);
+  // Telegram — require either an explicit t.me/telegram.* link or an "@handle"
+  // co-occurring with the word "telegram" within 40 chars. Plain "@username"
+  // is way more often a Reddit mention than a Telegram one.
   const tgLink = text.match(TELEGRAM_LINK);
-  if (tgHandle || tgLink) {
+  const tgHandleWithContext = TELEGRAM_CONTEXT.test(text)
+    ? text.match(TELEGRAM_HANDLE_NEAR_CONTEXT)
+    : null;
+  if (tgLink || tgHandleWithContext) {
     score += 0.32;
     channels++;
-    const sample = tgLink?.[0] ?? tgHandle?.[0].trim();
+    const sample = tgLink?.[0] ?? tgHandleWithContext?.[0].trim();
     reasons.push(`Telegram contact: ${sample?.slice(0, 40)}`);
     detail.telegram = true;
   }

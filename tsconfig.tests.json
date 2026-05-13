@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./tests/dist",
+    "rootDir": "./",
+    "declaration": false,
+    "sourceMap": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": ["./src/signals/**/*", "./tests/**/*"],
+  "exclude": ["./tests/dist/**/*"]
+}

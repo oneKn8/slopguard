@@ -7,6 +7,7 @@ import {
   bumpDailyMetrics,
   incrUserFlag,
   markHandled,
+  markFlagCounted,
 } from "../redis.js";
 import { AppSetting } from "../settings.js";
 
@@ -18,11 +19,9 @@ export async function onPostReport(
 ): Promise<void> {
   if (!event.post) return;
 
-  const handled = await markHandled(
-    context,
-    "postReport",
-    `${event.post.id}:${event.reason ?? ""}`,
-  );
+  // Dedupe on post id alone — different report reasons for the same post
+  // shouldn't each pay for a full LLM-escalated re-score.
+  const handled = await markHandled(context, "postReport", event.post.id);
   if (!handled) return;
 
   const settings = await context.settings.getAll();
@@ -76,7 +75,9 @@ export async function onPostReport(
 
   const flagThreshold = (settings[AppSetting.FlagThreshold] as number) ?? 0.6;
   if (score.finalScore >= flagThreshold) {
-    await bumpDailyMetrics(context, { flagged: 1 });
-    await incrUserFlag(context, authorName);
+    if (await markFlagCounted(context, event.post.id)) {
+      await bumpDailyMetrics(context, { flagged: 1 });
+      await incrUserFlag(context, authorName);
+    }
   }
 }

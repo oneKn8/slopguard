@@ -73,16 +73,23 @@ const DM_PATTERNS = [
   /\bcontact\s+me\s+(privately|directly|via)/i,
 ];
 
-// Crypto wallet address patterns (conservative — require word boundaries)
+// Crypto wallet address patterns (conservative — require word boundaries).
+// SOL is omitted from the unconditional list because base58 32–44 char strings
+// collide with many non-wallet tokens (Reddit IDs, UUID variants, hashes).
+// We only match SOL when it appears within 40 chars of a SOL-specific keyword.
 const WALLET_PATTERNS = [
   /\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b/, // BTC (legacy + bech32)
   /\b0x[a-fA-F0-9]{40}\b/, // ETH / EVM
   /\bT[A-Za-z0-9]{33}\b/, // TRON
-  /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b(?=\s|$)/, // SOL (loose — needs context check below)
 ];
 
+const SOL_NEAR_CONTEXT =
+  /\b(sol|solana|phantom|spl|sol-?address)\b[^\n]{0,40}[1-9A-HJ-NP-Za-km-z]{32,44}\b|[1-9A-HJ-NP-Za-km-z]{32,44}\b[^\n]{0,40}\b(sol|solana|phantom|spl|sol-?address)\b/i;
+
 function extractUrls(text: string): string[] {
-  return text.match(/https?:\/\/[^\s)\]]+/gi) ?? [];
+  const raw = text.match(/https?:\/\/[^\s)\]]+/gi) ?? [];
+  // Trim trailing sentence punctuation that should not be part of the URL.
+  return raw.map(u => u.replace(/[.,;:!?)]+$/, ""));
 }
 
 function hostOf(url: string): string | undefined {
@@ -182,20 +189,24 @@ export function promoSignal(input: PromoInput): SignalResult {
   }
 
   // --- Crypto wallets ---
-  // SOL pattern is loose, so we require an accompanying crypto keyword nearby.
-  const cryptoContext = /\b(btc|bitcoin|eth|ethereum|usdt|tron|sol|solana|wallet|address|send|donate|tip)\b/i.test(
-    text,
-  );
+  // BTC/ETH/TRON patterns are tight enough to use unconditionally.
+  // SOL only fires when within 40 chars of a SOL-specific keyword.
   let walletHits = 0;
   let firstWallet = "";
-  for (let i = 0; i < WALLET_PATTERNS.length; i++) {
-    const re = WALLET_PATTERNS[i];
-    const looseSolana = i === 3;
-    if (looseSolana && !cryptoContext) continue;
+  for (const re of WALLET_PATTERNS) {
     const m = text.match(re);
     if (m) {
       walletHits++;
       if (!firstWallet) firstWallet = m[0];
+    }
+  }
+  const solMatch = text.match(SOL_NEAR_CONTEXT);
+  if (solMatch) {
+    walletHits++;
+    if (!firstWallet) {
+      // Extract just the address portion from the proximity match
+      const addr = solMatch[0].match(/[1-9A-HJ-NP-Za-km-z]{32,44}/);
+      firstWallet = addr ? addr[0] : solMatch[0].slice(0, 20);
     }
   }
   if (walletHits > 0) {

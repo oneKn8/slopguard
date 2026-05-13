@@ -119,10 +119,11 @@ export async function duplicationSignal(
     detail.textMatches = textMatches;
 
     if (textMatches > 0) {
+      const display = textMatches >= MAX_ENTRIES ? `${MAX_ENTRIES}+` : `${textMatches}`;
       reasons.push(
         textMatches === 1
           ? "identical text posted once in this sub in last 48h"
-          : `identical text posted ${textMatches}x in this sub in last 48h`,
+          : `identical text posted ${display}x in this sub in last 48h`,
       );
     }
 
@@ -150,10 +151,11 @@ export async function duplicationSignal(
     detail.urlNormalized = normUrl;
 
     if (urlMatches > 0) {
+      const display = urlMatches >= MAX_ENTRIES ? `${MAX_ENTRIES}+` : `${urlMatches}`;
       reasons.push(
         urlMatches === 1
           ? `same external URL posted once in this sub in last 48h (${normUrl.slice(0, 40)})`
-          : `same external URL posted ${urlMatches}x in this sub in last 48h (${normUrl.slice(0, 40)})`,
+          : `same external URL posted ${display}x in this sub in last 48h (${normUrl.slice(0, 40)})`,
       );
     }
 

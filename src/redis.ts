@@ -10,7 +10,28 @@ export const keys = {
   dailySpend: (yyyymmdd: string) => `${PREFIX}:spend:${yyyymmdd}`,
   collisionLock: (itemId: string) => `${PREFIX}:lock:${itemId}`,
   handled: (event: string, id: string) => `${PREFIX}:handled:${event}:${id}`,
+  flagged: (itemId: string) => `${PREFIX}:flagged:${itemId}`,
 };
+
+/**
+ * Mark an item as having had its flag counted. Returns true the first time;
+ * false on subsequent calls. Used to dedupe user-flag-count increments
+ * across the original create event and any subsequent re-scores (reports,
+ * manual analyze, etc), preventing the historySignal feedback loop where
+ * the same item inflates the user's flagCount on every re-trigger.
+ */
+export async function markFlagCounted(
+  ctx: TriggerContext | Context,
+  itemId: string,
+): Promise<boolean> {
+  const key = keys.flagged(itemId);
+  const existing = await ctx.redis.get(key);
+  if (existing) return false;
+  await ctx.redis.set(key, "1", {
+    expiration: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+  });
+  return true;
+}
 
 export const today = (): string => new Date().toISOString().slice(0, 10);
 

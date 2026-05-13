@@ -40,21 +40,27 @@ function emDashDensityPer1k(text: string): number {
   return (emDashes / chars) * 1000;
 }
 
-function sentenceLengthBurstiness(text: string): number {
-  // Burstiness = std-dev / mean of sentence lengths.
-  // Human writing is bursty (high variance). AI default output is uniform (low variance).
+/**
+ * Sentence-length burstiness = std-dev / mean of sentence lengths.
+ * Human writing is bursty (high variance); AI default output is uniform.
+ * Returns `null` when there isn't enough data — caller must skip the
+ * burstiness contribution rather than treat the value as evidence.
+ */
+function sentenceLengthBurstiness(text: string): number | null {
+  // Lookahead split so a trailing terminator (no following whitespace) still
+  // closes the final sentence — common in non-native English text.
   const sentences = text
-    .split(/[.!?]+\s+/)
+    .split(/[.!?]+(?=\s|$)/)
     .map(s => s.trim())
     .filter(s => s.length > 0);
-  if (sentences.length < 4) return 0.5; // not enough data — return neutral
+  if (sentences.length < 4) return null;
   const lengths = sentences.map(s => s.split(/\s+/).length);
   const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
-  if (mean === 0) return 0.5;
+  if (mean === 0) return null;
   const variance =
     lengths.reduce((a, b) => a + (b - mean) ** 2, 0) / lengths.length;
   const std = Math.sqrt(variance);
-  return std / mean; // higher = more bursty = more human-like
+  return std / mean;
 }
 
 function formulaicMatches(text: string): string[] {
@@ -84,8 +90,27 @@ export function structuralSignal(text: string): SignalResult {
   const reasons: string[] = [];
   let score = 0;
 
-  // Em-dash density
+  // Compute every component first, then decide how much to surface.
   const emDashRate = emDashDensityPer1k(text);
+  const phrases = formulaicMatches(text);
+  const enumerationOpener = hasEnumerationOpener(text);
+  const burst = sentenceLengthBurstiness(text);
+  const boldHeadings = (text.match(/^\*\*[A-Z][^*]{2,30}\*\*\s*$/gm) ?? []).length;
+
+  // Strong-indicator count — used to gate the score for non-native-English
+  // fairness. A single trigger (e.g. one formulaic phrase, or just a
+  // markdown style choice) is not enough to score this signal hard.
+  // Shifat's design constraint: do not disproportionately flag non-native
+  // English writers.
+  const indicators = [
+    phrases.length >= 1,
+    emDashRate > 1,
+    enumerationOpener,
+    burst !== null && burst < 0.3,
+    boldHeadings >= 2,
+  ].filter(Boolean).length;
+
+  // Em-dash density
   if (emDashRate > 2) {
     score += 0.25;
     reasons.push(
@@ -97,36 +122,46 @@ export function structuralSignal(text: string): SignalResult {
   }
 
   // Formulaic phrases
-  const phrases = formulaicMatches(text);
   if (phrases.length >= 3) {
     score += 0.3;
-    reasons.push(`${phrases.length} formulaic AI phrases: "${phrases[0]}", "${phrases[1]}"…`);
+    reasons.push(
+      `${phrases.length} formulaic AI phrases: "${phrases[0]}", "${phrases[1]}"…`,
+    );
   } else if (phrases.length >= 1) {
     score += 0.12;
     reasons.push(`formulaic phrase: "${phrases[0]}"`);
   }
 
   // Enumeration opener
-  if (hasEnumerationOpener(text)) {
+  if (enumerationOpener) {
     score += 0.08;
     reasons.push("formulaic enumeration / 'Firstly' opener");
   }
 
-  // Burstiness — low = more AI-like
-  const burst = sentenceLengthBurstiness(text);
-  if (burst < 0.3) {
-    score += 0.18;
-    reasons.push(`uniform sentence lengths (burstiness ${burst.toFixed(2)})`);
-  } else if (burst > 0.7) {
-    // human-like — slight negative signal
-    score -= 0.05;
+  // Burstiness — only contributes when we had enough sentences to compute it.
+  if (burst !== null) {
+    if (burst < 0.3) {
+      score += 0.18;
+      reasons.push(`uniform sentence lengths (burstiness ${burst.toFixed(2)})`);
+    } else if (burst > 0.7) {
+      // human-like — slight negative signal
+      score -= 0.05;
+    }
   }
 
-  // Markdown formatting in places humans don't use it (bold sub-headings in casual posts)
-  const boldHeadings = (text.match(/^\*\*[A-Z][^*]{2,30}\*\*\s*$/gm) ?? []).length;
+  // Markdown bold sub-headings in casual posts
   if (boldHeadings >= 2) {
     score += 0.1;
-    reasons.push(`${boldHeadings} bold markdown headings (formal AI structuring)`);
+    reasons.push(
+      `${boldHeadings} bold markdown headings (formal AI structuring)`,
+    );
+  }
+
+  // Non-native-English protection: if only 0–1 indicators agree, cap the
+  // structural score at 0.2 so this signal alone cannot tip a post over
+  // the flag threshold. Real AI default-output stacks multiple indicators.
+  if (indicators < 2) {
+    score = Math.min(score, 0.2);
   }
 
   score = Math.max(0, Math.min(1, score));
@@ -139,8 +174,9 @@ export function structuralSignal(text: string): SignalResult {
     detail: {
       emDashRate: Number(emDashRate.toFixed(2)),
       formulaicPhraseCount: phrases.length,
-      burstiness: Number(burst.toFixed(2)),
+      burstiness: burst === null ? -1 : Number(burst.toFixed(2)),
       boldHeadings,
+      indicators,
     },
   };
 }

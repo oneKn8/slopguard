@@ -84,15 +84,17 @@ function fuse(results: SignalResult[]): {
   }
   const weightedAvg = weightSum > 0 ? weighted / weightSum : 0;
 
-  // Corroboration boost: a single strong (>=0.7) signal floors combined at
-  // 0.55; two medium-strong (>=0.5) signals floor it at 0.65.
+  // Corroboration boost: a single strong signal alone is not enough — we
+  // require multiple firing signals before flooring the score above the
+  // weighted average. This prevents a lone duplication hit (legit reposter)
+  // or a single promo phrase from amplifying through a 4x floor.
   const strong = results.filter(r => r.score >= 0.7).length;
   const mediumStrong = results.filter(r => r.score >= 0.5).length;
 
   let combined = weightedAvg;
-  if (strong >= 1) combined = Math.max(combined, 0.55);
-  if (mediumStrong >= 2) combined = Math.max(combined, 0.65);
-  if (mediumStrong >= 3) combined = Math.max(combined, 0.8);
+  if (strong >= 1 && mediumStrong >= 2) combined = Math.max(combined, 0.55);
+  if (mediumStrong >= 3) combined = Math.max(combined, 0.7);
+  if (strong >= 2) combined = Math.max(combined, 0.8);
   combined = Math.max(0, Math.min(1, combined));
 
   // topReasons: take the strongest signal's top reason first, then second,

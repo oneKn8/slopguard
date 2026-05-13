@@ -1,7 +1,13 @@
 import type { CommentSubmit } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
 import { runTriage } from "../lib/triage.js";
-import { saveScore, markHandled, bumpDailyMetrics, incrUserFlag } from "../redis.js";
+import {
+  saveScore,
+  markHandled,
+  bumpDailyMetrics,
+  incrUserFlag,
+  markFlagCounted,
+} from "../redis.js";
 import { shouldSkipUser } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
 import { AppSetting, getPolicyMode } from "../settings.js";
@@ -46,8 +52,10 @@ export async function onCommentCreate(
 
   const flagThreshold = (settings[AppSetting.FlagThreshold] as number) ?? 0.6;
   if (score.finalScore >= flagThreshold) {
-    await bumpDailyMetrics(context, { flagged: 1 });
-    await incrUserFlag(context, author);
+    if (await markFlagCounted(context, event.comment.id)) {
+      await bumpDailyMetrics(context, { flagged: 1 });
+      await incrUserFlag(context, author);
+    }
 
     if (getPolicyMode(settings) === "strict") {
       await autoRemoveIfThreshold(context, settings, score);

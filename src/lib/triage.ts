@@ -60,13 +60,18 @@ function deriveConfidence(combined: number, agg: AggregatedSignals): EnsembleSco
 }
 
 function fuseLocalAndLlm(local: number, llm: number): number {
-  // Local gets slightly more weight because spam/scam markers are
-  // objective (link shorteners, wallet addresses) whereas LLM AI-detection
-  // is fuzzy. But LLM can pull the score up on pure AI-text cases the
-  // local signals can't catch.
+  // Local gets slightly more weight because spam/scam markers are objective
+  // (link shorteners, wallet addresses) whereas LLM AI-detection is fuzzy
+  // and prone to false positives on technical/non-native writing.
   const weighted = local * 0.55 + llm * 0.45;
-  // Ratchet up if either side is highly confident — never wash out a 0.9
-  return Math.max(weighted, Math.max(local, llm) * 0.85);
+  // Ratchet only when both sides agree above 0.5 — a confident high local
+  // AND high LLM means we shouldn't wash out the agreement. If they
+  // disagree (e.g. clean local + hallucinated LLM "AI" verdict), trust the
+  // weighted average.
+  const bothAgreeHigh = Math.min(local, llm) >= 0.5;
+  return bothAgreeHigh
+    ? Math.max(weighted, Math.max(local, llm) * 0.85)
+    : weighted;
 }
 
 export async function runTriage(
@@ -133,6 +138,20 @@ export async function runTriage(
     ...local.topReasons,
     ...llmSignals.filter(s => !local.topReasons.includes(s)),
   ].slice(0, 5);
+
+  // Surface the case where escalation was requested but no working LLM
+  // was reachable — so mods know the score is local-only.
+  if (shouldEscalate) {
+    const allLlmFailed =
+      !llmEnsemble ||
+      llmEnsemble.providers.length === 0 ||
+      llmEnsemble.providers.every(p => p.error);
+    if (allLlmFailed) {
+      topReasons.unshift(
+        "LLM escalation requested but unavailable (no API keys or all providers errored)",
+      );
+    }
+  }
 
   return {
     finalScore,
