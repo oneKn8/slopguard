@@ -33,6 +33,12 @@ export interface VerifyRequest {
   reply?: {
     text: string;
     receivedAt: number;
+    classification?: {
+      category: string; // ReplyCategory; kept loose to avoid cross-import cycles
+      confidence: number;
+      reasoning: string;
+      classifiedAt: number;
+    };
   };
   status: "sent" | "replied" | "send_failed";
 }

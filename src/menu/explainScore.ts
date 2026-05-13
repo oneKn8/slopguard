@@ -1,6 +1,7 @@
 import type { Context, MenuItemOnPressEvent } from "@devvit/public-api";
 import { getScore, saveScore } from "../redis.js";
 import { runTriage } from "../lib/triage.js";
+import { readVerify } from "../lib/verifyAuthor.js";
 import type { EnsembleScore } from "../types.js";
 
 export function formatExplanation(score: EnsembleScore): string {
@@ -120,7 +121,21 @@ export async function explainScoreFromMenu(
     await saveScore(context, score);
   }
 
-  const text = formatExplanation(score);
+  let text = formatExplanation(score);
+
+  // If we asked the author to verify and they replied, surface that on the
+  // explainability card so mods see context next to the score.
+  const verify = await readVerify(context, targetId);
+  if (verify?.reply) {
+    const cls = verify.reply.classification;
+    text +=
+      `\n\n**Verify-author reply** (received ${new Date(verify.reply.receivedAt).toISOString()}):\n` +
+      `> ${verify.reply.text.slice(0, 600).replace(/\n+/g, " ")}` +
+      (cls
+        ? `\n\nClassifier: **${cls.category}** (${(cls.confidence * 100).toFixed(0)}%) — ${cls.reasoning}`
+        : "");
+  }
+
   console.log(`Slopguard explanation:\n${text}`);
   context.ui.showToast(
     `Slopguard ${(score.finalScore * 100).toFixed(0)}% (${score.confidence}). Details in logs.`,

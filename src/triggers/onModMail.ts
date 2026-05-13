@@ -1,7 +1,13 @@
 import type { ModMail } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
-import { attachReplyByConversation } from "../lib/verifyAuthor.js";
-import { markHandled } from "../redis.js";
+import {
+  attachReplyByConversation,
+  readVerify,
+  writeVerify,
+} from "../lib/verifyAuthor.js";
+import { markHandled, addToDailySpend, getDailySpend } from "../redis.js";
+import { classifyReply } from "../ensemble/replyClassifier.js";
+import { AppSetting } from "../settings.js";
 
 /**
  * Catches replies from authors to our verify-author DM and attaches the
@@ -71,9 +77,45 @@ export async function onModMail(
     replyText: body,
   });
 
-  if (record) {
-    console.log(
-      `Slopguard: attached author reply to ${record.itemId} (u/${record.authorName}, ${body.length} chars)`,
-    );
+  if (!record) return;
+  console.log(
+    `Slopguard: attached author reply to ${record.itemId} (u/${record.authorName}, ${body.length} chars)`,
+  );
+
+  // Optional LLM-aided reply classification — only when LLM escalation is
+  // enabled AND a Gemini key is configured. The classification is attached
+  // to the verify record so mods see it on the review card.
+  const settings = await context.settings.getAll();
+  if (settings[AppSetting.UseLlmEscalation] !== true) return;
+  const geminiKey = (settings[AppSetting.GeminiApiKey] as string) ?? "";
+  if (!geminiKey) return;
+
+  const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
+  const spent = await getDailySpend(context);
+  if (spent >= maxSpend) {
+    console.log("Slopguard: classifier skipped — daily spend cap reached");
+    return;
   }
+
+  const classification = await classifyReply(geminiKey, {
+    originalScore: record.score,
+    topReasons: record.topReasons ?? [],
+    replyText: record.reply?.text ?? body,
+  });
+  await addToDailySpend(context, classification.costUsd);
+
+  // Re-read in case anything else has touched the record concurrently, then
+  // write the classification back.
+  const latest = await readVerify(context, record.itemId);
+  if (!latest || !latest.reply) return;
+  latest.reply.classification = {
+    category: classification.category,
+    confidence: classification.confidence,
+    reasoning: classification.reasoning,
+    classifiedAt: Date.now(),
+  };
+  await writeVerify(context, latest);
+  console.log(
+    `Slopguard: reply classified as ${classification.category} (${(classification.confidence * 100).toFixed(0)}%) for ${record.itemId}`,
+  );
 }
