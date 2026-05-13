@@ -60,6 +60,12 @@ interface VisionPass {
   costUsd: number;
 }
 
+// Per-image reservation: we estimate ~$0.001 worst-case for a Gemini vision
+// pass (image classification + OCR). Reserving up-front before fan-out
+// prevents burst-load from bypassing the cap (10 image posts in the same
+// second would otherwise each see the same pre-call balance).
+const VISION_RESERVATION_USD = 0.001;
+
 async function visionPass(
   ctx: TriggerContext | Context,
   settings: SettingsValues,
@@ -71,16 +77,22 @@ async function visionPass(
   if (!geminiKey) return null;
 
   const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
-  const spent = await getDailySpend(ctx);
-  if (spent >= maxSpend) return null;
+  const reservedTotal = await addToDailySpend(ctx, VISION_RESERVATION_USD);
+  if (reservedTotal - VISION_RESERVATION_USD >= maxSpend) {
+    // Cap was already reached before our reservation; refund and bail.
+    await addToDailySpend(ctx, -VISION_RESERVATION_USD);
+    return null;
+  }
 
   const [aiClass, ocr] = await Promise.all([
     classifyImageForAi(geminiKey, imageUrl),
     extractTextFromImage(geminiKey, imageUrl),
   ]);
 
-  const costUsd = aiClass.costUsd + ocr.costUsd;
-  await addToDailySpend(ctx, costUsd);
+  const actualCost = aiClass.costUsd + ocr.costUsd;
+  // Reconcile: refund the reservation, charge actual.
+  await addToDailySpend(ctx, actualCost - VISION_RESERVATION_USD);
+  const costUsd = actualCost;
 
   const imageReasons: string[] = [];
   if (aiClass.score >= 0.7) {
@@ -144,7 +156,7 @@ function deriveConfidence(combined: number, agg: AggregatedSignals): EnsembleSco
   return "low";
 }
 
-function fuseLocalAndLlm(local: number, llm: number): number {
+export function fuseLocalAndLlm(local: number, llm: number): number {
   // Local gets slightly more weight because spam/scam markers are objective
   // (link shorteners, wallet addresses) whereas LLM AI-detection is fuzzy
   // and prone to false positives on technical/non-native writing.

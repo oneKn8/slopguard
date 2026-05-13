@@ -129,7 +129,10 @@ export function registerDashboard(): void {
       // JSON.parse(JSON.stringify(...)) and cast on use.
       const { data, loading } = useAsync(
         async () => {
-          const list = await readFlaggedQueue(context, 25);
+          // Cap at 15 visible entries — keeps the dashboard cheap to render
+          // and keeps Refresh from doing more Redis round-trips than the
+          // viewer can see at once.
+          const list = await readFlaggedQueue(context, 15);
           return JSON.parse(JSON.stringify(list));
         },
         { depends: [refreshKey] },
@@ -158,6 +161,9 @@ export function registerDashboard(): void {
             </vstack>
           ) : (
             <vstack gap="small">
+              {/* Devvit Blocks doesn't expose a key prop on components, so
+                  we rely on a stable order (queue is already sorted
+                  most-recent-first) for predictable reconciliation. */}
               {list.map(s => (
                 <ScoreCard score={s} />
               ))}

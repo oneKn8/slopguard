@@ -75,7 +75,7 @@ function clamp01(n: unknown): number {
   return Math.max(0, Math.min(1, v));
 }
 
-function normalizeCategory(s: string | undefined): ReplyCategory {
+export function normalizeCategory(s: string | undefined): ReplyCategory {
   switch ((s ?? "").toLowerCase().trim()) {
     case "genuine":
       return "genuine";

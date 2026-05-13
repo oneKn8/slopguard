@@ -9,6 +9,9 @@
 import { structuralSignal } from "../src/signals/structural.js";
 import { promoSignal } from "../src/signals/promo.js";
 import { contactSignal } from "../src/signals/contact.js";
+import { fuseLocalAndLlm } from "../src/lib/triage.js";
+import { shortHash } from "../src/lib/federation.js";
+import { normalizeCategory } from "../src/ensemble/replyClassifier.js";
 
 type Range = [number, number];
 
@@ -113,6 +116,84 @@ console.log("\n--- contact ---");
 for (const c of contactCases) {
   const r = contactSignal({ text: c.text });
   assertRange("contact", c.name, r.score, c.expect, r.reasons);
+}
+
+// --------------- fuseLocalAndLlm ---------------
+
+console.log("\n--- fuseLocalAndLlm ---");
+function expectClose(label: string, actual: number, target: number, tol = 0.02): void {
+  const ok = Math.abs(actual - target) <= tol;
+  if (ok) {
+    passes++;
+    console.log(`  PASS  fuse        ${label.padEnd(40)} ${actual.toFixed(3)} ~= ${target}`);
+  } else {
+    fails++;
+    console.log(`  FAIL  fuse        ${label.padEnd(40)} ${actual.toFixed(3)} != ${target}`);
+  }
+}
+// Both agree high → ratchet up
+expectClose("both-high-0.9", fuseLocalAndLlm(0.9, 0.9), Math.max(0.9 * 0.55 + 0.9 * 0.45, 0.9 * 0.85));
+// LLM hallucinates AI on clean local — local must dominate, no ratchet
+expectClose("local-clean-llm-high", fuseLocalAndLlm(0.1, 0.9), 0.1 * 0.55 + 0.9 * 0.45);
+// Local high, LLM low — also no ratchet
+expectClose("local-high-llm-low", fuseLocalAndLlm(0.9, 0.1), 0.9 * 0.55 + 0.1 * 0.45);
+// Mid-mid agreement, both >=0.5 → ratchet allowed
+const midmid = fuseLocalAndLlm(0.6, 0.7);
+expectClose("both-mid-corroborate", midmid, Math.max(0.6 * 0.55 + 0.7 * 0.45, 0.7 * 0.85));
+
+// --------------- shortHash ---------------
+
+console.log("\n--- shortHash ---");
+const h1 = await shortHash("alice");
+const h2 = await shortHash("alice");
+const h3 = await shortHash("bob");
+if (h1 === h2) {
+  passes++;
+  console.log(`  PASS  shortHash   stable-across-calls                        ${h1}`);
+} else {
+  fails++;
+  console.log(`  FAIL  shortHash   stable-across-calls                        ${h1} != ${h2}`);
+}
+if (h1 !== h3) {
+  passes++;
+  console.log(`  PASS  shortHash   different-input-different-hash             ${h1} != ${h3}`);
+} else {
+  fails++;
+  console.log(`  FAIL  shortHash   different-input-different-hash             collision`);
+}
+if (/^[0-9a-f]{32}$/.test(h1)) {
+  passes++;
+  console.log(`  PASS  shortHash   shape-32-hex                               ${h1}`);
+} else {
+  fails++;
+  console.log(`  FAIL  shortHash   shape-32-hex                               ${h1}`);
+}
+
+// --------------- normalizeCategory ---------------
+
+console.log("\n--- normalizeCategory ---");
+const catCases: { input: string | undefined; expected: string }[] = [
+  { input: "genuine", expected: "genuine" },
+  { input: "Genuine", expected: "genuine" },
+  { input: " EVASIVE ", expected: "evasive" },
+  { input: "non-response", expected: "non-response" },
+  { input: "nonresponse", expected: "non-response" },
+  { input: "off-topic", expected: "non-response" },
+  { input: "ai-generated-reply", expected: "ai-generated-reply" },
+  { input: "ai", expected: "ai-generated-reply" },
+  { input: "weird-category", expected: "uncertain" },
+  { input: undefined, expected: "uncertain" },
+  { input: "", expected: "uncertain" },
+];
+for (const c of catCases) {
+  const got = normalizeCategory(c.input);
+  if (got === c.expected) {
+    passes++;
+    console.log(`  PASS  normCat     ${(c.input ?? "(undefined)").padEnd(20)} -> ${got}`);
+  } else {
+    fails++;
+    console.log(`  FAIL  normCat     ${(c.input ?? "(undefined)").padEnd(20)} -> ${got} (want ${c.expected})`);
+  }
 }
 
 console.log(`\n${passes} passed, ${fails} failed`);

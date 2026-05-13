@@ -9,6 +9,12 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },
-  "include": ["./src/signals/**/*", "./tests/**/*"],
+  "include": [
+    "./src/signals/**/*",
+    "./src/lib/triage.ts",
+    "./src/lib/federation.ts",
+    "./src/ensemble/replyClassifier.ts",
+    "./tests/**/*"
+  ],
   "exclude": ["./tests/dist/**/*"]
 }

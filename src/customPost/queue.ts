@@ -54,16 +54,17 @@ export async function pushToQueue(
 /**
  * Read the queue and hydrate each entry with its EnsembleScore. Drops
  * entries whose score is no longer in Redis (expired or manually deleted).
+ * Hydration happens in parallel so dashboard render cost is O(1) round-
+ * trips instead of O(N).
  */
 export async function readFlaggedQueue(
   ctx: TriggerContext | Context,
   limit = 25,
 ): Promise<EnsembleScore[]> {
   const queue = await readQueue(ctx);
-  const out: EnsembleScore[] = [];
-  for (const entry of queue.slice(0, limit)) {
-    const s = await getScore(ctx, entry.itemId);
-    if (s) out.push(s);
-  }
-  return out;
+  const slice = queue.slice(0, limit);
+  const fetched = await Promise.all(
+    slice.map(entry => getScore(ctx, entry.itemId)),
+  );
+  return fetched.filter((s): s is EnsembleScore => s !== null);
 }

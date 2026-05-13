@@ -7,12 +7,14 @@ import { AppSetting } from "../settings.js";
  *
  * **Privacy framework** (the parts mods must trust):
  *
- *   - Only SHA-256 hashes of usernames leave the sub. Reversing the hash
- *     to a username requires knowing the username already; no enumeration
- *     possible.
- *   - No post content, no IP, no email, no metadata. Just `{hash, removedCount,
- *     lastRemovedTs}`. The hash is salted with the username prefix-suffix
- *     to make rainbow-table reuse harder.
+ *   - Only SHA-256 hashes of usernames leave the sub. The salt is a fixed
+ *     constant — this protects against ad-hoc passive readers but it does
+ *     NOT defend against a determined adversary with a Reddit username
+ *     wordlist, who can pre-image the entire space. Treat the hash as a
+ *     pseudonymization layer, not an anti-enumeration guarantee. Mods who
+ *     want stronger privacy should keep federation disabled (the default).
+ *   - No post content, no IP, no email, no metadata. Just
+ *     `{userHash, srcHash, removedCount, lastRemovedTs}`.
  *   - The sub identifier is also hashed before publishing — receiving
  *     subs see "2 other communities also removed this actor" without
  *     knowing which subs.
@@ -26,8 +28,14 @@ import { AppSetting } from "../settings.js";
  * works end-to-end against local Redis only, useful for development and
  * for subs that want to see what would be published without committing.
  *
- * The actual federation gateway is a small JSON-over-HTTPS service; spec
- * is documented in ARCHITECTURE.md. Any compliant gateway works.
+ * **Index design**: peer records are stored as `Observations[userHash][srcHash] →
+ * { lastTs, count }` so we can derive `communities = keys(obs).length` and
+ * `totalRemovedCount = sum(counts)` *idempotently* every cycle. Earlier
+ * versions incremented on every merge — that double-counts when the same
+ * record comes back across cycles.
+ *
+ * Gateway responses are validated before merge: bounded record count,
+ * clamped `removedCount`, sane `lastRemovedTs`, well-formed hex hashes.
  */
 
 const OUTBOX_KEY = "sg:fed:outbox";
@@ -51,17 +59,18 @@ export interface FederationOutbox {
 }
 
 /**
- * Stable, salted, truncated SHA-256. We truncate to 16 hex chars (64 bits)
- * — wide enough to make collisions vanishingly rare across the union of
- * all Reddit users, narrow enough that nobody mistakes the hash for a
- * reversible identifier.
+ * Stable, salted, half-SHA-256 (128-bit / 32-hex). 128 bits keeps the
+ * birthday-bound collision probability negligible across all of Reddit
+ * (P(collision) for 10^8 users is ~10^-24), while halving the transport
+ * size vs the full digest. Salt is constant and public — see file header
+ * for the honest privacy framing.
  */
-async function shortHash(input: string): Promise<string> {
+export async function shortHash(input: string): Promise<string> {
   const enc = new TextEncoder().encode(SALT_PREFIX + input);
   const buf = await crypto.subtle.digest("SHA-256", enc);
   const bytes = new Uint8Array(buf);
   let hex = "";
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 16; i++) {
     hex += bytes[i].toString(16).padStart(2, "0");
   }
   return hex;
@@ -90,25 +99,80 @@ async function writeOutbox(
   });
 }
 
+interface PeerObservation {
+  lastTs: number;
+  count: number;
+}
+
 interface FederationIndex {
-  // userHash → {removedCount summed across all srcHashes, communitiesCount, lastSeen}
-  entries: Record<
-    string,
-    { totalRemovedCount: number; communities: number; lastSeen: number }
-  >;
+  // userHash → srcHash → most-recent observation. Aggregates are derived,
+  // not stored, so re-merging the same record across cycles is idempotent.
+  obs: Record<string, Record<string, PeerObservation>>;
+}
+
+// Bounds for malicious-gateway defense (see C3 in review pass #2).
+const GATEWAY_MAX_RECORDS = 5000;
+const RECORD_MAX_REMOVED_COUNT = 50;
+const HASH_HEX_RE = /^[0-9a-f]{32}$/;
+
+function isValidPeerRecord(rec: unknown): rec is FederationRecord {
+  if (!rec || typeof rec !== "object") return false;
+  const r = rec as Record<string, unknown>;
+  if (typeof r.userHash !== "string" || !HASH_HEX_RE.test(r.userHash)) return false;
+  if (typeof r.srcHash !== "string" || !HASH_HEX_RE.test(r.srcHash)) return false;
+  if (typeof r.removedCount !== "number") return false;
+  if (!Number.isFinite(r.removedCount) || r.removedCount < 1) return false;
+  if (typeof r.lastRemovedTs !== "number") return false;
+  if (!Number.isFinite(r.lastRemovedTs)) return false;
+  if (r.lastRemovedTs > Date.now() + 60_000) return false; // future-dated
+  return true;
+}
+
+function clampRemoved(n: number): number {
+  return Math.max(1, Math.min(RECORD_MAX_REMOVED_COUNT, Math.floor(n)));
+}
+
+interface DerivedEntry {
+  totalRemovedCount: number;
+  communities: number;
+  lastSeen: number;
+}
+
+function deriveEntry(
+  idx: FederationIndex,
+  userHash: string,
+): DerivedEntry | null {
+  const perSrc = idx.obs[userHash];
+  if (!perSrc) return null;
+  const srcKeys = Object.keys(perSrc);
+  if (srcKeys.length === 0) return null;
+  let total = 0;
+  let lastSeen = 0;
+  for (const k of srcKeys) {
+    total += perSrc[k].count;
+    if (perSrc[k].lastTs > lastSeen) lastSeen = perSrc[k].lastTs;
+  }
+  return { totalRemovedCount: total, communities: srcKeys.length, lastSeen };
 }
 
 async function readIndex(
   ctx: TriggerContext | Context,
 ): Promise<FederationIndex> {
   const raw = await ctx.redis.get(INDEX_KEY);
-  if (!raw) return { entries: {} };
+  if (!raw) return { obs: {} };
   try {
-    const parsed = JSON.parse(raw) as FederationIndex;
-    if (!parsed || !parsed.entries) return { entries: {} };
-    return parsed;
+    const parsed = JSON.parse(raw) as Partial<FederationIndex> & {
+      // Tolerate the v1 legacy shape so existing installs don't crash on
+      // upgrade. Anything in `entries` is dropped — the next publish cycle
+      // will rebuild from peer responses.
+      entries?: unknown;
+    };
+    if (!parsed || typeof parsed.obs !== "object" || parsed.obs === null) {
+      return { obs: {} };
+    }
+    return { obs: parsed.obs };
   } catch {
-    return { entries: {} };
+    return { obs: {} };
   }
 }
 
@@ -153,16 +217,19 @@ export async function recordConfirmedRemoval(
   const box = await readOutbox(ctx);
   const existing = box.records.find(r => r.userHash === userHash);
   if (existing) {
-    existing.removedCount++;
+    existing.removedCount = clampRemoved(existing.removedCount + 1);
     existing.lastRemovedTs = Date.now();
   } else {
-    box.records.unshift({
+    box.records.push({
       userHash,
       srcHash,
       removedCount: 1,
       lastRemovedTs: Date.now(),
     });
   }
+  // Most-recent first, then truncate — so touched records survive the
+  // MAX_OUTBOX cap rather than aging off because of insertion order.
+  box.records.sort((a, b) => b.lastRemovedTs - a.lastRemovedTs);
   box.records = box.records.slice(0, MAX_OUTBOX);
   await writeOutbox(ctx, box);
 }
@@ -186,7 +253,7 @@ export async function queryAuthor(
 
   const userHash = await shortHash(authorName);
   const idx = await readIndex(ctx);
-  const entry = idx.entries[userHash];
+  const entry = deriveEntry(idx, userHash);
   if (!entry) return { score: 0, reason: null };
 
   let score = 0;
@@ -290,25 +357,27 @@ export async function publishCycle(
     };
   }
 
-  // Merge peer records into the local index. We deliberately do NOT merge
-  // records that share our own srcHash — those are echoes of our own
-  // outbox and would double-count us.
+  // Validate + merge peer records. Drop our own echoes; bound count;
+  // clamp removedCount; reject malformed hashes. Store as per-(user,src)
+  // observations — re-merging the same record is idempotent (overwrites,
+  // doesn't add).
   const ourSrcHash = await shortHash(
     ctx.subredditName ?? (await ctx.reddit.getCurrentSubredditName()),
   );
   const idx = await readIndex(ctx);
+  const peerRaw = Array.isArray(response.index) ? response.index : [];
+  const bounded = peerRaw.slice(0, GATEWAY_MAX_RECORDS);
   let merged = 0;
-  for (const rec of response.index ?? []) {
+  for (const recRaw of bounded) {
+    if (!isValidPeerRecord(recRaw)) continue;
+    const rec = recRaw;
     if (rec.srcHash === ourSrcHash) continue;
-    const cur = idx.entries[rec.userHash] ?? {
-      totalRemovedCount: 0,
-      communities: 0,
-      lastSeen: 0,
+    const perSrc = idx.obs[rec.userHash] ?? {};
+    perSrc[rec.srcHash] = {
+      lastTs: rec.lastRemovedTs,
+      count: clampRemoved(rec.removedCount),
     };
-    cur.totalRemovedCount += rec.removedCount;
-    cur.communities += 1;
-    cur.lastSeen = Math.max(cur.lastSeen, rec.lastRemovedTs);
-    idx.entries[rec.userHash] = cur;
+    idx.obs[rec.userHash] = perSrc;
     merged++;
   }
   await writeIndex(ctx, idx);

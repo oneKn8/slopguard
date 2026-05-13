@@ -91,24 +91,46 @@ function safeParse<T>(raw: string): T | null {
   }
 }
 
+const FETCH_TIMEOUT_MS = 5000;
+const BASE64_CHUNK = 0x8000; // 32KB — avoids per-char string concatenation
+
+function toBase64(bytes: Uint8Array): string {
+  // Chunked btoa: turning a 5MB image into a 5M-char string via
+  // per-char concatenation is pathological in V8 isolates. Build the
+  // binary string in 32KB slices instead.
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
+    const slice = bytes.subarray(i, i + BASE64_CHUNK);
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(slice) as unknown as number[],
+    );
+  }
+  return btoa(binary);
+}
+
 async function fetchImageBase64(
   url: string,
 ): Promise<{ data: string; mimeType: string } | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") ?? "image/jpeg";
     if (!ct.startsWith("image/")) return null;
+    // Early-reject oversize responses via Content-Length when available —
+    // a malicious 50MB image otherwise downloads fully before the post-
+    // buffer size check rejects it.
+    const declaredLen = Number(res.headers.get("content-length") ?? "0");
+    if (declaredLen > MAX_IMAGE_BYTES) return null;
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0 || buf.byteLength > MAX_IMAGE_BYTES) return null;
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return { data: btoa(binary), mimeType: ct };
+    return { data: toBase64(new Uint8Array(buf)), mimeType: ct };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

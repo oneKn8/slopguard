@@ -41,7 +41,11 @@ export async function onModMail(
   );
   if (!dedup) return;
 
-  // Fetch the conversation to get message bodies.
+  // Fetch the conversation and pick the EXACT message for this event. We
+  // deliberately do NOT fall back to "latest user message" — earlier code
+  // did, which re-classified the wrong message when an author sent
+  // several short replies in sequence (each event fires; the fallback
+  // always picks the latest body regardless of which event it was).
   let body = "";
   try {
     const res = await context.reddit.modMail.getConversation({
@@ -49,18 +53,14 @@ export async function onModMail(
       markRead: false,
     });
     const messages = res.conversation?.messages ?? {};
-    // Take the message that matches event.messageId; fall back to latest
-    // participant_user message if exact match isn't found.
     const exact = messages[event.messageId];
-    if (exact) {
-      body = exact.bodyMarkdown ?? exact.body ?? "";
-    } else {
-      const userMessages = Object.values(messages)
-        .filter(m => m.participatingAs === "participant_user")
-        .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-      const last = userMessages[userMessages.length - 1];
-      body = last?.bodyMarkdown ?? last?.body ?? "";
+    if (!exact) {
+      console.warn(
+        `Slopguard onModMail: message ${event.messageId} not in conversation ${event.conversationId} — skipping`,
+      );
+      return;
     }
+    body = exact.bodyMarkdown ?? exact.body ?? "";
   } catch (err) {
     console.warn(
       `Slopguard onModMail: failed to fetch conversation ${event.conversationId}: ${
@@ -89,6 +89,24 @@ export async function onModMail(
   if (settings[AppSetting.UseLlmEscalation] !== true) return;
   const geminiKey = (settings[AppSetting.GeminiApiKey] as string) ?? "";
   if (!geminiKey) return;
+
+  // Only classify the FIRST reply. A hostile author can otherwise spam
+  // the conversation with long replies and burn the daily spend cap.
+  if (record.reply?.classification) {
+    console.log(
+      `Slopguard: reply already classified for ${record.itemId}, skipping`,
+    );
+    return;
+  }
+  // Also skip if the verify-DM was sent >24h ago — stale conversations
+  // probably aren't the original verification flow.
+  const STALE_REPLY_WINDOW_MS = 1000 * 60 * 60 * 24;
+  if (Date.now() - record.sentAt > STALE_REPLY_WINDOW_MS) {
+    console.log(
+      `Slopguard: verify-DM too old (${Math.floor((Date.now() - record.sentAt) / 3600000)}h), not classifying`,
+    );
+    return;
+  }
 
   const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
   const spent = await getDailySpend(context);

@@ -137,7 +137,7 @@ export async function sendVerifyDm(
         body,
         to: score.authorName,
       });
-      conversationId = res?.conversation?.id ?? undefined;
+      conversationId = res?.conversation?.id;
       sendOk = true;
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
