@@ -11,6 +11,7 @@ import {
 import { shouldSkipUser } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
 import { sendVerifyDm } from "../lib/verifyAuthor.js";
+import { pushToQueue } from "../customPost/queue.js";
 import { AppSetting, getPolicyMode } from "../settings.js";
 
 export async function onCommentCreate(
@@ -57,6 +58,7 @@ export async function onCommentCreate(
     if (firstFlag) {
       await bumpDailyMetrics(context, { flagged: 1 });
       await incrUserFlag(context, author);
+      await pushToQueue(context, event.comment.id);
     }
 
     const mode = getPolicyMode(settings);

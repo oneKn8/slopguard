@@ -9,6 +9,8 @@ import { removeAsAiFromMenu } from "./menu/removeAsAI.js";
 import { showMetricsFromMenu } from "./menu/showMetrics.js";
 import { analyzeWithSlopguardFromMenu } from "./menu/analyzeWithSlopguard.js";
 import { claimReviewFromMenu } from "./menu/claimReview.js";
+import { createDashboardPostFromMenu } from "./menu/createDashboardPost.js";
+import { registerDashboard } from "./customPost/dashboard.js";
 import {
   dailyMetricsHandler,
   DAILY_METRICS_JOB,
@@ -21,6 +23,8 @@ Devvit.configure({
 });
 
 Devvit.addSettings(buildSettings());
+
+registerDashboard();
 
 Devvit.addTrigger({
   event: "PostCreate",
@@ -123,6 +127,13 @@ Devvit.addMenuItem({
   forUserType: "moderator",
   label: "Slopguard: Show today's metrics",
   onPress: showMetricsFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "subreddit",
+  forUserType: "moderator",
+  label: "Slopguard: Create dashboard post",
+  onPress: createDashboardPostFromMenu,
 });
 
 export default Devvit;

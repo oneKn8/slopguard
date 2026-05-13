@@ -78,6 +78,8 @@ export async function onPostReport(
     if (await markFlagCounted(context, event.post.id)) {
       await bumpDailyMetrics(context, { flagged: 1 });
       await incrUserFlag(context, authorName);
+      const { pushToQueue } = await import("../customPost/queue.js");
+      await pushToQueue(context, event.post.id);
     }
   }
 }
