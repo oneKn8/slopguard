@@ -3,6 +3,7 @@ import { buildSettings } from "./settings.js";
 import { onPostCreate } from "./triggers/onPostCreate.js";
 import { onCommentCreate } from "./triggers/onCommentCreate.js";
 import { onPostReport } from "./triggers/onPostReport.js";
+import { onModMail } from "./triggers/onModMail.js";
 import { explainScoreFromMenu } from "./menu/explainScore.js";
 import { removeAsAiFromMenu } from "./menu/removeAsAI.js";
 import { showMetricsFromMenu } from "./menu/showMetrics.js";
@@ -34,6 +35,11 @@ Devvit.addTrigger({
 Devvit.addTrigger({
   event: "PostReport",
   onEvent: onPostReport,
+});
+
+Devvit.addTrigger({
+  event: "ModMail",
+  onEvent: onModMail,
 });
 
 Devvit.addTrigger({

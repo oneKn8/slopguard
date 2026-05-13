@@ -10,6 +10,7 @@ import {
 } from "../redis.js";
 import { shouldSkipUser } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
+import { sendVerifyDm } from "../lib/verifyAuthor.js";
 import { AppSetting, getPolicyMode } from "../settings.js";
 
 export async function onCommentCreate(
@@ -52,13 +53,18 @@ export async function onCommentCreate(
 
   const flagThreshold = (settings[AppSetting.FlagThreshold] as number) ?? 0.6;
   if (score.finalScore >= flagThreshold) {
-    if (await markFlagCounted(context, event.comment.id)) {
+    const firstFlag = await markFlagCounted(context, event.comment.id);
+    if (firstFlag) {
       await bumpDailyMetrics(context, { flagged: 1 });
       await incrUserFlag(context, author);
     }
 
-    if (getPolicyMode(settings) === "strict") {
+    const mode = getPolicyMode(settings);
+    if (mode === "strict") {
       await autoRemoveIfThreshold(context, settings, score);
+    }
+    if ((mode === "verify" || mode === "strict") && firstFlag) {
+      await sendVerifyDm(context, score);
     }
   }
 }

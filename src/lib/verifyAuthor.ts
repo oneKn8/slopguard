@@ -45,7 +45,7 @@ interface DevvitModMail {
     subject: string;
     body: string;
     to: string;
-  }): Promise<{ conversation?: { id?: string }; conversationId?: string }>;
+  }): Promise<{ conversation?: { id?: string } }>;
 }
 
 function modMailOf(ctx: TriggerContext | Context): DevvitModMail | undefined {
@@ -131,8 +131,7 @@ export async function sendVerifyDm(
         body,
         to: score.authorName,
       });
-      conversationId =
-        res?.conversation?.id ?? res?.conversationId ?? undefined;
+      conversationId = res?.conversation?.id ?? undefined;
       sendOk = true;
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
