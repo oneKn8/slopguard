@@ -1,0 +1,22 @@
+{
+  "private": true,
+  "name": "slopguard",
+  "version": "0.1.0",
+  "description": "AI-content detection for Reddit mod queues with multi-LLM ensemble scoring.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "echo 'no lint configured'",
+    "upload": "devvit upload",
+    "playtest": "devvit playtest",
+    "logs": "devvit logs"
+  },
+  "dependencies": {
+    "@devvit/protos": "0.12.23",
+    "@devvit/public-api": "0.12.23"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}
