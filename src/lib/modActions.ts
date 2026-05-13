@@ -2,6 +2,7 @@ import type { TriggerContext, Context, SettingsValues } from "@devvit/public-api
 import type { EnsembleScore } from "../types.js";
 import { AppSetting } from "../settings.js";
 import { incrUserRemoved, bumpDailyMetrics } from "../redis.js";
+import { recordConfirmedRemoval } from "./federation.js";
 
 interface TemplateVars {
   score: string;
@@ -96,6 +97,13 @@ export async function removeAsAi(
   await bumpDailyMetrics(ctx, {
     manualRemoved: 1,
     estimatedTimeSavedMinutes: 3,
+  });
+
+  // Hashed-only contribution to the federation outbox (no-op when
+  // federation is disabled). See lib/federation.ts for the privacy model.
+  await recordConfirmedRemoval(ctx, settings as Record<string, unknown>, {
+    authorName: score.authorName,
+    subredditName,
   });
 
   return {

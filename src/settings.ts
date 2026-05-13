@@ -41,6 +41,10 @@ export enum AppSetting {
 
   // Discord webhook (optional)
   DiscordWebhookUrl = "discordWebhookUrl",
+
+  // Federation (V2 opt-in, hashed-only)
+  EnableFederation = "enableFederation",
+  FederationEndpoint = "federationEndpoint",
 }
 
 export function getPolicyMode(settings: SettingsValues): PolicyMode {
@@ -263,6 +267,28 @@ export function buildSettings(): SettingsFormField[] {
           helpText:
             "If set, every first-flag event is posted as an embed to this webhook. Get one in your Discord server → Channel Settings → Integrations → Webhooks.",
           isSecret: true,
+          scope: "installation",
+        },
+      ],
+    },
+    {
+      type: "group",
+      label: "Cross-sub federation (V2 opt-in, hashed-only)",
+      fields: [
+        {
+          type: "boolean",
+          name: AppSetting.EnableFederation,
+          label: "Enable hashed bad-actor sharing across subs",
+          helpText:
+            "When enabled, confirmed removals contribute hashed-only records to the federation outbox. Hashes are SHA-256 salted; usernames and content are never shared. You can audit the outbox at any time via 'Slopguard: Audit federation outbox' menu action. Toggling this off clears the local outbox immediately.",
+          defaultValue: false,
+        },
+        {
+          type: "string",
+          name: AppSetting.FederationEndpoint,
+          label: "Federation gateway URL (optional)",
+          helpText:
+            "If empty, the outbox is maintained locally for audit only (dry-run mode) — nothing leaves the sub. Set to a Slopguard-compatible gateway URL to participate in cross-sub sharing.",
           scope: "installation",
         },
       ],

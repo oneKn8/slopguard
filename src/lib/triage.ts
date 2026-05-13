@@ -14,6 +14,7 @@ import {
 import { promoSignal } from "../signals/promo.js";
 import { contactSignal } from "../signals/contact.js";
 import { addToDailySpend, getDailySpend } from "../redis.js";
+import { queryAuthor as queryFederation } from "./federation.js";
 import { AppSetting } from "../settings.js";
 
 /**
@@ -174,6 +175,29 @@ export async function runTriage(
     recentPostCount: input.recentPostCount,
     recentCrossPostCount: input.recentCrossPostCount,
   });
+
+  // Federation lookup — no-op when disabled. Hashed only; see federation.ts
+  // for the privacy framework. Fed in alongside the local "history" signal
+  // — federated signal floors what we know locally without overriding it.
+  const fed = await queryFederation(
+    ctx,
+    settings as Record<string, unknown>,
+    input.authorName,
+  );
+  if (fed.score > 0 && fed.reason) {
+    const fedResult: SignalResult = {
+      kind: "history",
+      name: "federation",
+      score: fed.score,
+      reasons: [fed.reason],
+    };
+    local.results.push(fedResult);
+    // The federation hit augments the combined score by treating it as
+    // its own ratchet (since communities-count can't be wrong — we either
+    // saw it elsewhere or we didn't).
+    local.combinedScore = Math.max(local.combinedScore, fed.score * 0.85);
+    local.topReasons = [fed.reason, ...local.topReasons].slice(0, 5);
+  }
 
   // Vision pass — only for image posts when explicitly enabled. Folds the
   // image-AI score + OCR-derived promo/contact hits back into the local

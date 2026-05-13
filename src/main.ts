@@ -15,6 +15,15 @@ import {
   dailyMetricsHandler,
   DAILY_METRICS_JOB,
 } from "./scheduler/dailyMetricsPost.js";
+import {
+  federationPublishHandler,
+  FEDERATION_PUBLISH_JOB,
+} from "./scheduler/federationPublish.js";
+import {
+  auditFederationFromMenu,
+  clearFederationOutboxFromMenu,
+  publishFederationNowFromMenu,
+} from "./menu/federation.js";
 
 Devvit.configure({
   redditAPI: true,
@@ -58,12 +67,26 @@ Devvit.addTrigger({
     } catch (e) {
       console.warn(`Slopguard: scheduler init failed: ${(e as Error).message}`);
     }
+    try {
+      await context.scheduler.runJob({
+        name: FEDERATION_PUBLISH_JOB,
+        cron: "0 */6 * * *", // every 6h
+      });
+      console.log("Slopguard: scheduled federation publish job.");
+    } catch (e) {
+      console.warn(`Slopguard: federation scheduler init failed: ${(e as Error).message}`);
+    }
   },
 });
 
 Devvit.addSchedulerJob({
   name: DAILY_METRICS_JOB,
   onRun: dailyMetricsHandler,
+});
+
+Devvit.addSchedulerJob({
+  name: FEDERATION_PUBLISH_JOB,
+  onRun: federationPublishHandler,
 });
 
 Devvit.addMenuItem({
@@ -134,6 +157,27 @@ Devvit.addMenuItem({
   forUserType: "moderator",
   label: "Slopguard: Create dashboard post",
   onPress: createDashboardPostFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "subreddit",
+  forUserType: "moderator",
+  label: "Slopguard: Audit federation outbox",
+  onPress: auditFederationFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "subreddit",
+  forUserType: "moderator",
+  label: "Slopguard: Publish federation now",
+  onPress: publishFederationNowFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "subreddit",
+  forUserType: "moderator",
+  label: "Slopguard: Clear federation outbox",
+  onPress: clearFederationOutboxFromMenu,
 });
 
 export default Devvit;
