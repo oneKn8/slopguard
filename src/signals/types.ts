@@ -10,7 +10,9 @@ export type SignalKind =
   | "structural"
   | "behavioral"
   | "duplication"
-  | "history";
+  | "history"
+  | "promo"
+  | "contact";
 
 export interface SignalResult {
   kind: SignalKind;
