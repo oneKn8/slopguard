@@ -1,11 +1,17 @@
 import type { PostReport } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
-import { scoreItem } from "../ensemble/index.js";
-import { saveScore, getScore, bumpDailyMetrics, incrUserFlag, markHandled } from "../redis.js";
+import { runTriage } from "../lib/triage.js";
+import {
+  saveScore,
+  getScore,
+  bumpDailyMetrics,
+  incrUserFlag,
+  markHandled,
+} from "../redis.js";
 import { AppSetting } from "../settings.js";
 
-// When a user reports a post, re-score with FORCE escalation — mod attention is implied,
-// so spend the extra cents to get a confident answer.
+// When a user reports a post, re-run triage with forceLlm = true so we pay
+// the extra cents to get a confident answer — mod attention is implied.
 export async function onPostReport(
   event: PostReport,
   context: TriggerContext,
@@ -21,7 +27,7 @@ export async function onPostReport(
 
   const settings = await context.settings.getAll();
 
-  // Use cached score if it was already high-confidence and recent (< 1hr)
+  // Use cached score if it was already high-confidence and recent (<1hr)
   const cached = await getScore(context, event.post.id);
   if (
     cached &&
@@ -31,10 +37,9 @@ export async function onPostReport(
     return;
   }
 
-  const text = [event.post.title, event.post.selftext]
-    .filter(Boolean)
-    .join("\n\n");
-  if (text.trim().length < 25) return;
+  const title = event.post.title ?? "";
+  const body = event.post.selftext ?? "";
+  if (`${title}\n${body}`.trim().length < 25) return;
 
   // PostReport events don't carry author name — fetch from Reddit API.
   let authorName = "";
@@ -46,12 +51,19 @@ export async function onPostReport(
   }
   if (!authorName) return;
 
-  const score = await scoreItem(context, settings, {
+  const subredditName =
+    context.subredditName ??
+    (await context.reddit.getCurrentSubredditName());
+
+  const score = await runTriage(context, settings, {
     itemId: event.post.id,
     itemType: "post",
+    subredditName,
     authorName,
-    text,
-    forceEscalation: true,
+    title,
+    body,
+    url: event.post.url,
+    forceLlm: settings[AppSetting.UseLlmEscalation] === true,
   });
 
   if (!score) return;

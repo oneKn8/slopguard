@@ -44,6 +44,8 @@ export function fuse(
     disagreement,
     providers,
     scoredAt: Date.now(),
+    source: "llm",
+    llmScore: finalScore,
     ...meta,
   };
 }

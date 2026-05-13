@@ -1,5 +1,9 @@
 export type ModelName = "gemini-flash" | "claude-haiku" | "gpt-4o-mini";
 
+export type ScoreSource = "local" | "llm" | "local+llm";
+
+export type PolicyMode = "advisory" | "verify" | "strict";
+
 export interface ProviderScore {
   model: ModelName;
   score: number;
@@ -8,6 +12,12 @@ export interface ProviderScore {
   latencyMs: number;
   costUsd: number;
   error?: string;
+}
+
+export interface LocalSignalSummary {
+  combinedScore: number;
+  topReasons: string[];
+  perSignal: { name: string; score: number; reasons: string[] }[];
 }
 
 export interface EnsembleScore {
@@ -19,6 +29,12 @@ export interface EnsembleScore {
   itemId: string;
   itemType: "post" | "comment";
   authorName: string;
+  // Local-first triage fields (added in hybrid refactor)
+  source: ScoreSource;
+  localScore?: number;
+  llmScore?: number;
+  localSignals?: LocalSignalSummary;
+  topReasons?: string[];
 }
 
 export interface DailyMetrics {

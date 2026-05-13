@@ -1,4 +1,5 @@
-import type { SettingsFormField } from "@devvit/public-api";
+import type { SettingsFormField, SettingsValues } from "@devvit/public-api";
+import type { PolicyMode } from "./types.js";
 
 export enum AppSetting {
   // Provider keys
@@ -7,9 +8,15 @@ export enum AppSetting {
   OpenAiApiKey = "openAiApiKey",
 
   // Behavior
+  PolicyMode = "policyMode",
   FlagThreshold = "flagThreshold",
   AutoRemoveEnabled = "autoRemoveEnabled",
   AutoRemoveThreshold = "autoRemoveThreshold",
+
+  // Hybrid local-first triage
+  UseLlmEscalation = "useLlmEscalation",
+  LlmEscalationLow = "llmEscalationLow",
+  LlmEscalationHigh = "llmEscalationHigh",
 
   // Provider selection
   UseGemini = "useGemini",
@@ -28,6 +35,13 @@ export enum AppSetting {
 
   // Metrics post
   EnableDailyMetricsPost = "enableDailyMetricsPost",
+}
+
+export function getPolicyMode(settings: SettingsValues): PolicyMode {
+  const raw = settings[AppSetting.PolicyMode];
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  if (first === "verify" || first === "strict") return first;
+  return "advisory";
 }
 
 export function buildSettings(): SettingsFormField[] {
@@ -67,29 +81,71 @@ export function buildSettings(): SettingsFormField[] {
     },
     {
       type: "group",
-      label: "Behavior",
+      label: "Policy mode",
       fields: [
+        {
+          type: "select",
+          name: AppSetting.PolicyMode,
+          label: "Policy mode",
+          helpText:
+            "Advisory: flag only, mods decide (recommended). Verify: also DM the author for a brief reply on high-confidence flags. Strict: also auto-remove at very high confidence.",
+          options: [
+            { label: "Advisory (flag only)", value: "advisory" },
+            { label: "Verify (flag + author DM)", value: "verify" },
+            { label: "Strict (flag + DM + auto-remove)", value: "strict" },
+          ],
+          defaultValue: ["advisory"],
+          multiSelect: false,
+        },
         {
           type: "number",
           name: AppSetting.FlagThreshold,
           label: "Flag threshold (0.0–1.0)",
-          helpText: "Score above this surfaces the AI badge on the post.",
+          helpText: "Combined score above this surfaces the review card to mods.",
           defaultValue: 0.6,
         },
         {
           type: "boolean",
           name: AppSetting.AutoRemoveEnabled,
-          label: "Auto-remove enabled",
+          label: "Auto-remove enabled (Strict mode only)",
           helpText:
-            "If on, posts above the auto-remove threshold are removed automatically. Off by default — recommended to flag-only first.",
+            "Has no effect unless policy mode = Strict. Off by default — recommended to flag-only first.",
           defaultValue: false,
         },
         {
           type: "number",
           name: AppSetting.AutoRemoveThreshold,
           label: "Auto-remove threshold (0.0–1.0)",
-          helpText: "Only used if auto-remove is enabled.",
+          helpText: "Only used in Strict mode with auto-remove enabled.",
           defaultValue: 0.92,
+        },
+      ],
+    },
+    {
+      type: "group",
+      label: "LLM escalation (optional, costs money)",
+      fields: [
+        {
+          type: "boolean",
+          name: AppSetting.UseLlmEscalation,
+          label: "Escalate uncertain cases to LLM",
+          helpText:
+            "Off = pure local signals (free, fast, deterministic). On = items whose local score lands in the gray band also get scored by Gemini/Claude/OpenAI for a tiebreaker. Requires API keys.",
+          defaultValue: false,
+        },
+        {
+          type: "number",
+          name: AppSetting.LlmEscalationLow,
+          label: "Escalation band lower bound (0.0–1.0)",
+          helpText: "Local scores at or above this trigger LLM escalation.",
+          defaultValue: 0.4,
+        },
+        {
+          type: "number",
+          name: AppSetting.LlmEscalationHigh,
+          label: "Escalation band upper bound (0.0–1.0)",
+          helpText: "Local scores at or below this trigger LLM escalation. Above this we trust local.",
+          defaultValue: 0.75,
         },
       ],
     },

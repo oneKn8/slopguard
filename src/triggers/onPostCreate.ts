@@ -1,10 +1,10 @@
 import type { PostCreate } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
-import { scoreItem } from "../ensemble/index.js";
+import { runTriage } from "../lib/triage.js";
 import { saveScore, markHandled, bumpDailyMetrics, incrUserFlag } from "../redis.js";
 import { shouldSkipUser } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
-import { AppSetting } from "../settings.js";
+import { AppSetting, getPolicyMode } from "../settings.js";
 
 export async function onPostCreate(
   event: PostCreate,
@@ -26,18 +26,23 @@ export async function onPostCreate(
     return;
   }
 
-  // Compose text: title + body
-  const text = [event.post.title, event.post.selftext]
-    .filter(Boolean)
-    .join("\n\n");
+  const title = event.post.title ?? "";
+  const body = event.post.selftext ?? "";
+  const combined = `${title}\n\n${body}`.trim();
+  if (combined.length < 25) return;
 
-  if (text.trim().length < 25) return;
+  const subredditName =
+    context.subredditName ??
+    (await context.reddit.getCurrentSubredditName());
 
-  const score = await scoreItem(context, settings, {
+  const score = await runTriage(context, settings, {
     itemId: event.post.id,
     itemType: "post",
+    subredditName,
     authorName: author,
-    text,
+    title,
+    body,
+    url: event.post.url,
   });
 
   if (!score) return;
@@ -52,6 +57,9 @@ export async function onPostCreate(
   if (score.finalScore >= flagThreshold) {
     await bumpDailyMetrics(context, { flagged: 1 });
     await incrUserFlag(context, author);
-    await autoRemoveIfThreshold(context, settings, score);
+
+    if (getPolicyMode(settings) === "strict") {
+      await autoRemoveIfThreshold(context, settings, score);
+    }
   }
 }
