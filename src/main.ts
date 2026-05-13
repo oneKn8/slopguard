@@ -6,6 +6,8 @@ import { onPostReport } from "./triggers/onPostReport.js";
 import { explainScoreFromMenu } from "./menu/explainScore.js";
 import { removeAsAiFromMenu } from "./menu/removeAsAI.js";
 import { showMetricsFromMenu } from "./menu/showMetrics.js";
+import { analyzeWithSlopguardFromMenu } from "./menu/analyzeWithSlopguard.js";
+import { claimReviewFromMenu } from "./menu/claimReview.js";
 import {
   dailyMetricsHandler,
   DAILY_METRICS_JOB,
@@ -80,6 +82,34 @@ Devvit.addMenuItem({
   forUserType: "moderator",
   label: "Slopguard: Remove as AI slop",
   onPress: removeAsAiFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "post",
+  forUserType: "moderator",
+  label: "Slopguard: Analyze this post",
+  onPress: analyzeWithSlopguardFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "comment",
+  forUserType: "moderator",
+  label: "Slopguard: Analyze this comment",
+  onPress: analyzeWithSlopguardFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "post",
+  forUserType: "moderator",
+  label: "Slopguard: Claim review (or release)",
+  onPress: claimReviewFromMenu,
+});
+
+Devvit.addMenuItem({
+  location: "comment",
+  forUserType: "moderator",
+  label: "Slopguard: Claim review (or release)",
+  onPress: claimReviewFromMenu,
 });
 
 Devvit.addMenuItem({
