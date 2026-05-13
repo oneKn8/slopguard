@@ -4,9 +4,16 @@ import type {
   LocalSignalSummary,
   ScoreSource,
 } from "../types.js";
-import type { AggregatedSignals } from "../signals/types.js";
+import type { AggregatedSignals, SignalResult } from "../signals/types.js";
 import { runLocalSignals } from "../signals/index.js";
 import { scoreItem } from "../ensemble/index.js";
+import {
+  classifyImageForAi,
+  extractTextFromImage,
+} from "../ensemble/vision.js";
+import { promoSignal } from "../signals/promo.js";
+import { contactSignal } from "../signals/contact.js";
+import { addToDailySpend, getDailySpend } from "../redis.js";
 import { AppSetting } from "../settings.js";
 
 /**
@@ -34,6 +41,83 @@ export interface TriageInput {
   recentPostCount?: number;
   recentCrossPostCount?: number;
   forceLlm?: boolean; // e.g. invoked from a report or manual mod menu action
+}
+
+const IMAGE_HOST_RE = /^https?:\/\/(?:i\.|preview\.)?redd\.it\/|^https?:\/\/i\.imgur\.com\//i;
+const IMAGE_EXT_RE = /\.(?:jpe?g|png|gif|webp)(?:\?|$)/i;
+
+function isImageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  return IMAGE_HOST_RE.test(url) || IMAGE_EXT_RE.test(url);
+}
+
+interface VisionPass {
+  imageAiScore: number;
+  imageReasons: string[];
+  ocrText: string;
+  ocrReasons: string[];
+  costUsd: number;
+}
+
+async function visionPass(
+  ctx: TriggerContext | Context,
+  settings: SettingsValues,
+  imageUrl: string,
+): Promise<VisionPass | null> {
+  const useVision = settings[AppSetting.UseLlmVision] === true;
+  if (!useVision) return null;
+  const geminiKey = (settings[AppSetting.GeminiApiKey] as string) ?? "";
+  if (!geminiKey) return null;
+
+  const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
+  const spent = await getDailySpend(ctx);
+  if (spent >= maxSpend) return null;
+
+  const [aiClass, ocr] = await Promise.all([
+    classifyImageForAi(geminiKey, imageUrl),
+    extractTextFromImage(geminiKey, imageUrl),
+  ]);
+
+  const costUsd = aiClass.costUsd + ocr.costUsd;
+  await addToDailySpend(ctx, costUsd);
+
+  const imageReasons: string[] = [];
+  if (aiClass.score >= 0.7) {
+    imageReasons.push(
+      `vision: image looks AI-generated (${(aiClass.score * 100).toFixed(0)}%) — ${aiClass.reasoning}`,
+    );
+  } else if (aiClass.score >= 0.45) {
+    imageReasons.push(
+      `vision: image possibly AI-generated (${(aiClass.score * 100).toFixed(0)}%)`,
+    );
+  }
+
+  const ocrReasons: string[] = [];
+  if (ocr.text && ocr.text.length > 20) {
+    // Re-run promo + contact on the OCR'd text — catches scams hidden in
+    // screenshots (Telegram handle baked into an image, wallet QR caption,
+    // "DM me on Insta" inside a flyer).
+    const promoOcr = promoSignal({ text: ocr.text });
+    const contactOcr = contactSignal({ text: ocr.text });
+    if (promoOcr.score >= 0.3) {
+      ocrReasons.push(
+        `OCR text in image (promo ${(promoOcr.score * 100).toFixed(0)}%): ${promoOcr.reasons[0] ?? ""}`,
+      );
+    }
+    if (contactOcr.score >= 0.3) {
+      ocrReasons.push(
+        `OCR text in image (contact ${(contactOcr.score * 100).toFixed(0)}%): ${contactOcr.reasons[0] ?? ""}`,
+      );
+    }
+  }
+
+  return {
+    imageAiScore: aiClass.score,
+    imageReasons,
+    ocrText: ocr.text,
+    ocrReasons,
+    costUsd,
+  };
 }
 
 function summarizeSignals(agg: AggregatedSignals): LocalSignalSummary {
@@ -90,6 +174,42 @@ export async function runTriage(
     recentPostCount: input.recentPostCount,
     recentCrossPostCount: input.recentCrossPostCount,
   });
+
+  // Vision pass — only for image posts when explicitly enabled. Folds the
+  // image-AI score + OCR-derived promo/contact hits back into the local
+  // signals so the rest of the fusion pipeline doesn't have to know
+  // anything about images.
+  let visionCostUsd = 0;
+  if (
+    input.itemType === "post" &&
+    isImageUrl(input.url) &&
+    input.url
+  ) {
+    const vp = await visionPass(ctx, settings, input.url);
+    if (vp) {
+      visionCostUsd = vp.costUsd;
+      const visionResult: SignalResult = {
+        kind: "structural",
+        name: "vision",
+        score: Math.max(
+          vp.imageAiScore,
+          vp.ocrReasons.length > 0 ? 0.5 : 0,
+        ),
+        reasons: [...vp.imageReasons, ...vp.ocrReasons],
+        detail: { ocrLen: vp.ocrText.length, imageAi: vp.imageAiScore },
+      };
+      local.results.push(visionResult);
+      // Re-compute the combined score with the vision result added by
+      // ratcheting up to whatever the vision pass surfaced.
+      const visionContribution = visionResult.score * 0.7;
+      local.combinedScore = Math.max(local.combinedScore, visionContribution);
+      // Prepend vision reasons so they show up first in the review card.
+      local.topReasons = [
+        ...visionResult.reasons,
+        ...local.topReasons,
+      ].slice(0, 5);
+    }
+  }
 
   const useLlm = settings[AppSetting.UseLlmEscalation] === true;
   const low = (settings[AppSetting.LlmEscalationLow] as number) ?? 0.4;

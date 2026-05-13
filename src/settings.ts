@@ -18,6 +18,9 @@ export enum AppSetting {
   LlmEscalationLow = "llmEscalationLow",
   LlmEscalationHigh = "llmEscalationHigh",
 
+  // Vision (V2 opt-in)
+  UseLlmVision = "useLlmVision",
+
   // Provider selection
   UseGemini = "useGemini",
   UseClaude = "useClaude",
@@ -149,6 +152,14 @@ export function buildSettings(): SettingsFormField[] {
           label: "Escalation band upper bound (0.0–1.0)",
           helpText: "Local scores at or below this trigger LLM escalation. Above this we trust local.",
           defaultValue: 0.75,
+        },
+        {
+          type: "boolean",
+          name: AppSetting.UseLlmVision,
+          label: "Run Gemini vision on image posts (AI-image detection + OCR)",
+          helpText:
+            "When enabled, image-only posts also get scored by Gemini vision for AI-image generation and OCR-extracted text is run through the promo/contact signals to catch text-in-image scams. Costs ~$0.0005-$0.001 per image. Requires Gemini key.",
+          defaultValue: false,
         },
       ],
     },
