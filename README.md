@@ -1,5 +1,7 @@
 # Slopguard
 
+![Slopguard — explainable triage for Reddit mod queues](docs/banner.png)
+
 > **An explainable triage layer for Reddit mods** — surfaces likely synthetic content, spam, scams, and coordinated inauthentic behavior with multi-signal scoring, confidence-based review tiers, verify-author appeals, and mod-collision prevention. **Human judgment is preserved by default.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
