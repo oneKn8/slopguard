@@ -1,4 +1,5 @@
 import type { SettingsFormField, SettingsValues } from "@devvit/public-api";
+import { SettingScope } from "@devvit/public-api";
 import type { PolicyMode } from "./types.js";
 
 export enum AppSetting {
@@ -58,16 +59,16 @@ export function buildSettings(): SettingsFormField[] {
   return [
     {
       type: "group",
-      label: "API keys (Gemini is required; Claude + OpenAI optional)",
+      label: "API keys (set once by the app publisher — Gemini required for LLM features)",
       fields: [
         {
           type: "string",
           name: AppSetting.GeminiApiKey,
           label: "Gemini API key",
           helpText:
-            "Required. Get a free key at https://aistudio.google.com/apikey — generous free tier.",
+            "Only used if LLM escalation or vision is enabled. Get a free key at https://aistudio.google.com/apikey — generous free tier. App-scope: one key shared across all installs (Devvit requires this for secret fields).",
           isSecret: true,
-          scope: "installation",
+          scope: SettingScope.App,
         },
         {
           type: "string",
@@ -76,7 +77,7 @@ export function buildSettings(): SettingsFormField[] {
           helpText:
             "Adds Claude to the ensemble for higher accuracy on uncertain cases. https://console.anthropic.com",
           isSecret: true,
-          scope: "installation",
+          scope: SettingScope.App,
         },
         {
           type: "string",
@@ -85,7 +86,7 @@ export function buildSettings(): SettingsFormField[] {
           helpText:
             "Adds GPT-4o-mini to the ensemble as a tiebreaker. https://platform.openai.com/api-keys",
           isSecret: true,
-          scope: "installation",
+          scope: SettingScope.App,
         },
       ],
     },
@@ -265,9 +266,8 @@ export function buildSettings(): SettingsFormField[] {
           name: AppSetting.DiscordWebhookUrl,
           label: "Discord webhook URL",
           helpText:
-            "If set, every first-flag event is posted as an embed to this webhook. Get one in your Discord server → Channel Settings → Integrations → Webhooks.",
-          isSecret: true,
-          scope: "installation",
+            "If set, every first-flag event is posted as an embed to this webhook. Per-sub setting. Get one in your Discord server → Channel Settings → Integrations → Webhooks.",
+          scope: SettingScope.Installation,
         },
       ],
     },
@@ -288,8 +288,8 @@ export function buildSettings(): SettingsFormField[] {
           name: AppSetting.FederationEndpoint,
           label: "Federation gateway URL (optional)",
           helpText:
-            "If empty, the outbox is maintained locally for audit only (dry-run mode) — nothing leaves the sub. Set to a Slopguard-compatible gateway URL to participate in cross-sub sharing.",
-          scope: "installation",
+            "If empty, the outbox is maintained locally for audit only (dry-run mode) — nothing leaves the sub. Set to a Slopguard-compatible gateway URL to participate in cross-sub sharing. Per-sub setting.",
+          scope: SettingScope.Installation,
         },
       ],
     },
