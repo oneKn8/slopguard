@@ -59,34 +59,31 @@ export function buildSettings(): SettingsFormField[] {
   return [
     {
       type: "group",
-      label: "API keys (set once by the app publisher — Gemini required for LLM features)",
+      label: "API keys (BYOK — each sub provides its own; only used when LLM escalation or vision is enabled)",
       fields: [
         {
           type: "string",
           name: AppSetting.GeminiApiKey,
           label: "Gemini API key",
           helpText:
-            "Only used if LLM escalation or vision is enabled. Get a free key at https://aistudio.google.com/apikey — generous free tier. App-scope: one key shared across all installs (Devvit requires this for secret fields).",
-          isSecret: true,
-          scope: SettingScope.App,
+            "Bring your own. Get a free key at https://aistudio.google.com/apikey (1,500 req/day free tier covers most subs). Heads-up: Devvit only encrypts app-scope secrets — per-sub keys are visible to other mods of THIS sub in the settings panel. Use a key dedicated to this app and rotate if compromised.",
+          scope: SettingScope.Installation,
         },
         {
           type: "string",
           name: AppSetting.AnthropicApiKey,
           label: "Anthropic API key (optional)",
           helpText:
-            "Adds Claude to the ensemble for higher accuracy on uncertain cases. https://console.anthropic.com",
-          isSecret: true,
-          scope: SettingScope.App,
+            "Adds Claude to the ensemble. https://console.anthropic.com — same per-sub / mod-visible note as Gemini.",
+          scope: SettingScope.Installation,
         },
         {
           type: "string",
           name: AppSetting.OpenAiApiKey,
           label: "OpenAI API key (optional)",
           helpText:
-            "Adds GPT-4o-mini to the ensemble as a tiebreaker. https://platform.openai.com/api-keys",
-          isSecret: true,
-          scope: SettingScope.App,
+            "Adds GPT-4o-mini as a tiebreaker. https://platform.openai.com/api-keys — same per-sub / mod-visible note as Gemini.",
+          scope: SettingScope.Installation,
         },
       ],
     },
