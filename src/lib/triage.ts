@@ -223,12 +223,14 @@ export async function runTriage(
     local.topReasons = [fed.reason, ...local.topReasons].slice(0, 5);
   }
 
-  // Vision pass — only for image posts when explicitly enabled. Folds the
-  // image-AI score + OCR-derived promo/contact hits back into the local
-  // signals so the rest of the fusion pipeline doesn't have to know
-  // anything about images.
+  // Vision pass — only for image posts when explicitly enabled AND the
+  // caller hasn't requested LLM/vision suppression (skipLlm covers both
+  // since vision is a paid Gemini call). Folds the image-AI score +
+  // OCR-derived promo/contact hits back into the local signals so the
+  // rest of the fusion pipeline doesn't have to know anything about images.
   let visionCostUsd = 0;
   if (
+    !input.skipLlm &&
     input.itemType === "post" &&
     isImageUrl(input.url) &&
     input.url
@@ -336,5 +338,6 @@ export async function runTriage(
     llmScore,
     localSignals: summarizeSignals(local),
     topReasons,
+    visionCostUsd: visionCostUsd > 0 ? visionCostUsd : undefined,
   };
 }

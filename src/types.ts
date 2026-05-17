@@ -35,6 +35,9 @@ export interface EnsembleScore {
   llmScore?: number;
   localSignals?: LocalSignalSummary;
   topReasons?: string[];
+  // Vision cost is paid via Gemini outside `providers`, so it needs its
+  // own slot — otherwise daily metrics under-report by the vision spend.
+  visionCostUsd?: number;
 }
 
 export interface DailyMetrics {

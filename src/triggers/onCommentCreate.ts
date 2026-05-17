@@ -51,7 +51,9 @@ export async function onCommentCreate(
   await saveScore(context, score);
   await bumpDailyMetrics(context, {
     itemsScored: 1,
-    totalCostUsd: score.providers.reduce((a, p) => a + p.costUsd, 0),
+    totalCostUsd:
+      score.providers.reduce((a, p) => a + p.costUsd, 0) +
+      (score.visionCostUsd ?? 0),
   });
 
   const flagThreshold = (settings[AppSetting.FlagThreshold] as number) ?? 0.6;

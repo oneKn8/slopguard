@@ -1,6 +1,6 @@
 import type { PostReport } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
-import { runTriage } from "../lib/triage.js";
+import { runTriage, isImagePostUrl } from "../lib/triage.js";
 import {
   saveScore,
   getScore,
@@ -38,7 +38,15 @@ export async function onPostReport(
 
   const title = event.post.title ?? "";
   const body = event.post.selftext ?? "";
-  if (`${title}\n${body}`.trim().length < 25) return;
+  // Allow short titles when the post has a media URL — vision/OCR still
+  // applies. Matches the onPostCreate gate so reported image scams aren't
+  // silently skipped.
+  if (
+    `${title}\n${body}`.trim().length < 25 &&
+    !isImagePostUrl(event.post.url)
+  ) {
+    return;
+  }
 
   // PostReport events don't carry author name — fetch from Reddit API.
   let authorName = "";
@@ -70,7 +78,9 @@ export async function onPostReport(
   await saveScore(context, score);
   await bumpDailyMetrics(context, {
     itemsScored: 1,
-    totalCostUsd: score.providers.reduce((a, p) => a + p.costUsd, 0),
+    totalCostUsd:
+      score.providers.reduce((a, p) => a + p.costUsd, 0) +
+      (score.visionCostUsd ?? 0),
   });
 
   const flagThreshold = (settings[AppSetting.FlagThreshold] as number) ?? 0.6;
