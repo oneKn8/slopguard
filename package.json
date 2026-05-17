@@ -1,7 +1,7 @@
 {
   "private": true,
-  "name": "slopguard",
-  "version": "0.1.0",
+  "name": "slopguard-mod",
+  "version": "0.0.0",
   "description": "AI-content detection for Reddit mod queues with multi-LLM ensemble scoring.",
   "license": "MIT",
   "type": "module",
