@@ -10,11 +10,15 @@ import {
  * Claim-review menu action. Lets a mod assert "I'm looking at this" so
  * other mods don't double up on the same modqueue item. If the lock is
  * already held by someone else, shows a toast with the current holder
- * and time remaining; the mod can re-press to force-claim if needed
+ * and time remaining; the mod can re-press within 60s to force-claim
  * (e.g. the original mod walked away).
  *
  * Pressing while you already hold the lock releases it.
  */
+
+const FORCE_INTENT_TTL_MS = 60_000;
+const forceIntentKey = (itemId: string, mod: string) =>
+  `sg:lock-force-intent:${itemId}:${mod}`;
 
 async function currentModName(context: Context): Promise<string | undefined> {
   try {
@@ -41,9 +45,8 @@ export async function claimReviewFromMenu(
     return;
   }
 
-  const existing = await readLock(context, targetId);
-
   // Toggle: pressing while you already hold the lock releases it.
+  const existing = await readLock(context, targetId);
   if (existing && existing.modName === mod) {
     const released = await releaseLock(context, { itemId: targetId, modName: mod });
     context.ui.showToast(
@@ -52,17 +55,31 @@ export async function claimReviewFromMenu(
     return;
   }
 
+  // If a force-intent flag exists from a recent failed press, honor it.
+  const intentKey = forceIntentKey(targetId, mod);
+  const hasIntent = Boolean(await context.redis.get(intentKey));
+
   const result = await claimLock(context, {
     itemId: targetId,
     modName: mod,
+    force: hasIntent,
   });
 
   if (result.ok) {
-    context.ui.showToast(`Slopguard: you're now reviewing this item.`);
+    if (hasIntent) await context.redis.del(intentKey);
+    context.ui.showToast(
+      hasIntent
+        ? "Slopguard: force-claimed (previous holder overridden)."
+        : "Slopguard: you're now reviewing this item.",
+    );
     return;
   }
 
+  // First failure: arm the force-intent flag so the next press steals.
+  await context.redis.set(intentKey, "1", {
+    expiration: new Date(Date.now() + FORCE_INTENT_TTL_MS),
+  });
   context.ui.showToast(
-    `Slopguard: already claimed — ${formatLockStatus(result.holder)}.`,
+    `Slopguard: already claimed — ${formatLockStatus(result.holder)}. Press again within 60s to force-claim.`,
   );
 }

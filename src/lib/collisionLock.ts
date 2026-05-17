@@ -88,15 +88,10 @@ export async function claimLock(
     note?: string;
   },
 ): Promise<
-  | { ok: true; lock: CollisionLock }
+  | { ok: true; lock: CollisionLock; renewed: boolean }
   | { ok: false; reason: "held_by_other"; holder: CollisionLock }
 > {
   const ttl = args.ttlMs ?? DEFAULT_TTL_MS;
-  const existing = await readLock(ctx, args.itemId);
-  if (existing && existing.modName !== args.modName && !args.force) {
-    return { ok: false, reason: "held_by_other", holder: existing };
-  }
-
   const now = Date.now();
   const lock: CollisionLock = {
     itemId: args.itemId,
@@ -105,19 +100,42 @@ export async function claimLock(
     expiresAt: now + ttl,
     note: args.note,
   };
+  const expiration = new Date(lock.expiresAt + 1000);
 
-  await ctx.redis.set(KEY(args.itemId), JSON.stringify(lock), {
-    expiration: new Date(lock.expiresAt + 1000),
-  });
+  // Fast path: NX-claim. Wins atomically when no current holder.
+  const nxResult = await ctx.redis.set(
+    KEY(args.itemId),
+    JSON.stringify(lock),
+    { nx: true, expiration },
+  );
+  if (Boolean(nxResult)) {
+    await broadcast(ctx, {
+      type: "claim",
+      itemId: args.itemId,
+      modName: args.modName,
+      ts: now,
+    });
+    return { ok: true, lock, renewed: false };
+  }
 
+  // NX failed — someone holds it (or our previous claim hasn't expired).
+  const existing = await readLock(ctx, args.itemId);
+  if (existing && existing.modName !== args.modName && !args.force) {
+    return { ok: false, reason: "held_by_other", holder: existing };
+  }
+
+  // Same mod renewing, OR a force-claim. Overwrite is intentional here.
+  await ctx.redis.set(KEY(args.itemId), JSON.stringify(lock), { expiration });
+
+  const renewed = existing?.modName === args.modName;
   await broadcast(ctx, {
-    type: existing?.modName === args.modName ? "renew" : "claim",
+    type: renewed ? "renew" : "claim",
     itemId: args.itemId,
     modName: args.modName,
     ts: now,
   });
 
-  return { ok: true, lock };
+  return { ok: true, lock, renewed };
 }
 
 export async function releaseLock(

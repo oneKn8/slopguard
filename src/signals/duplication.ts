@@ -11,11 +11,16 @@ import type { SignalResult } from "./types.js";
  *
  * Conservative: requires >=40 normalized chars to score, so short comments
  * like "thanks!" never collide.
+ *
+ * Storage: Redis sorted sets keyed by (sub, contentHash). Members are itemIds;
+ * scores are timestamps. zAdd + zRemRangeByScore are atomic, so two near-
+ * simultaneous identical posts can't both fail to see each other.
  */
 
 const TEXT_KEY = (sub: string, hash: string) => `sg:dup:txt:${sub}:${hash}`;
 const URL_KEY = (sub: string, hash: string) => `sg:dup:url:${sub}:${hash}`;
 const WINDOW_MS = 1000 * 60 * 60 * 48;
+const WINDOW_S = 60 * 60 * 48;
 const MAX_ENTRIES = 50;
 const MIN_NORMALIZED_CHARS = 40;
 
@@ -25,11 +30,6 @@ export interface DuplicationInput {
   title?: string;
   body?: string;
   url?: string;
-}
-
-interface DupEntry {
-  id: string;
-  ts: number;
 }
 
 function fnv1a32(s: string): string {
@@ -63,28 +63,41 @@ function normalizeUrl(url: string): string | undefined {
   }
 }
 
-async function readEntries(
+/**
+ * Atomically record this itemId into the dup-key's sorted set and count
+ * how many *other* items shared the same content in the window. Returns the
+ * count of matches excluding the current item.
+ */
+async function recordAndCount(
   ctx: TriggerContext | Context,
   key: string,
-): Promise<DupEntry[]> {
-  const raw = await ctx.redis.get(key);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as DupEntry[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+  itemId: string,
+  now: number,
+  cutoff: number,
+): Promise<number> {
+  // Prune anything older than the window. Atomic and bounded — older
+  // entries pre-cutoff are no longer relevant.
+  await ctx.redis.zRemRangeByScore(key, 0, cutoff);
 
-async function writeEntries(
-  ctx: TriggerContext | Context,
-  key: string,
-  entries: DupEntry[],
-): Promise<void> {
-  await ctx.redis.set(key, JSON.stringify(entries), {
-    expiration: new Date(Date.now() + WINDOW_MS),
+  // Read the current in-window members BEFORE adding self, so we don't
+  // count this item as its own duplicate.
+  const priorMembers = await ctx.redis.zRange(key, cutoff, "+inf", {
+    by: "score",
   });
+  const matches = priorMembers.filter(m => m.member !== itemId).length;
+
+  // Add self. zAdd is atomic and idempotent on the member; if we re-fire
+  // for the same itemId (e.g. report trigger), the score updates rather
+  // than creating a duplicate slot.
+  await ctx.redis.zAdd(key, { score: now, member: itemId });
+
+  // Hard cap at MAX_ENTRIES — drop the oldest if we exceeded.
+  await ctx.redis.zRemRangeByRank(key, 0, -MAX_ENTRIES - 1);
+
+  // Refresh TTL so the key auto-evicts when no longer active.
+  await ctx.redis.expire(key, WINDOW_S);
+
+  return matches;
 }
 
 function scoreFromMatches(matches: number): number {
@@ -112,9 +125,7 @@ export async function duplicationSignal(
   if (normalized.length >= MIN_NORMALIZED_CHARS) {
     const textHash = fnv1a32(normalized);
     const key = TEXT_KEY(input.subredditName, textHash);
-    const prior = await readEntries(ctx, key);
-    const fresh = prior.filter(e => e.ts >= cutoff && e.id !== input.itemId);
-    textMatches = fresh.length;
+    textMatches = await recordAndCount(ctx, key, input.itemId, now, cutoff);
     detail.textHash = textHash;
     detail.textMatches = textMatches;
 
@@ -126,13 +137,6 @@ export async function duplicationSignal(
           : `identical text posted ${display}x in this sub in last 48h`,
       );
     }
-
-    // Record current item, prune to window + cap
-    fresh.push({ id: input.itemId, ts: now });
-    const pruned = fresh
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, MAX_ENTRIES);
-    await writeEntries(ctx, key, pruned);
   } else {
     detail.textTooShort = true;
   }
@@ -143,9 +147,7 @@ export async function duplicationSignal(
   if (normUrl) {
     const urlHash = fnv1a32(normUrl);
     const key = URL_KEY(input.subredditName, urlHash);
-    const prior = await readEntries(ctx, key);
-    const fresh = prior.filter(e => e.ts >= cutoff && e.id !== input.itemId);
-    urlMatches = fresh.length;
+    urlMatches = await recordAndCount(ctx, key, input.itemId, now, cutoff);
     detail.urlHash = urlHash;
     detail.urlMatches = urlMatches;
     detail.urlNormalized = normUrl;
@@ -158,12 +160,6 @@ export async function duplicationSignal(
           : `same external URL posted ${display}x in this sub in last 48h (${normUrl.slice(0, 40)})`,
       );
     }
-
-    fresh.push({ id: input.itemId, ts: now });
-    const pruned = fresh
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, MAX_ENTRIES);
-    await writeEntries(ctx, key, pruned);
   }
 
   // Take the stronger of the two — don't double-count text+URL on the same item

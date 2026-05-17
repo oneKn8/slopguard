@@ -24,6 +24,8 @@ export async function scoreItem(
   if (text.length < 25) return null;
 
   const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
+  // Optimistic pre-flight check — cheap skip when cap is already breached.
+  // The atomic guarantee comes from the post-call check below.
   const spent = await getDailySpend(ctx);
   if (spent >= maxSpend) {
     console.log(`Slopguard: daily spend $${spent.toFixed(4)} >= cap $${maxSpend}. Skipping.`);
@@ -39,18 +41,21 @@ export async function scoreItem(
   const openaiKey = (settings[AppSetting.OpenAiApiKey] as string) ?? "";
 
   const providers: ProviderScore[] = [];
+  let overCap = false;
 
   // First pass: Gemini (cheap, always)
   if (useGemini && geminiKey) {
     const g = await scoreWithGemini(geminiKey, text);
     providers.push(g);
-    await addToDailySpend(ctx, g.costUsd);
+    const newTotal = await addToDailySpend(ctx, g.costUsd);
+    if (newTotal >= maxSpend) overCap = true;
   }
 
   // Decide whether to escalate
   const firstScore = providers[0]?.score ?? 0;
   const shouldEscalate =
-    opts.forceEscalation || isUncertain(firstScore) || providers.length === 0;
+    !overCap &&
+    (opts.forceEscalation || isUncertain(firstScore) || providers.length === 0);
 
   if (shouldEscalate) {
     const escalations: Promise<ProviderScore>[] = [];

@@ -42,6 +42,7 @@ export interface TriageInput {
   recentPostCount?: number;
   recentCrossPostCount?: number;
   forceLlm?: boolean; // e.g. invoked from a report or manual mod menu action
+  skipLlm?: boolean; // cost gates fired — run local only, no escalation
 }
 
 const IMAGE_HOST_RE = /^https?:\/\/(?:i\.|preview\.)?redd\.it\/|^https?:\/\/i\.imgur\.com\//i;
@@ -50,6 +51,14 @@ const IMAGE_EXT_RE = /\.(?:jpe?g|png|gif|webp)(?:\?|$)/i;
 function isImageUrl(url: string | undefined): boolean {
   if (!url) return false;
   return IMAGE_HOST_RE.test(url) || IMAGE_EXT_RE.test(url);
+}
+
+/**
+ * Exported variant for callers (e.g. trigger length-gating) that need to know
+ * if a post is image-based without parsing the URL themselves.
+ */
+export function isImagePostUrl(url: string | undefined): boolean {
+  return isImageUrl(url);
 }
 
 interface VisionPass {
@@ -77,9 +86,12 @@ async function visionPass(
   if (!geminiKey) return null;
 
   const maxSpend = (settings[AppSetting.MaxDailySpendUsd] as number) ?? 1;
+  // Atomic reserve: incrBy first, then check the post-reservation total.
+  // If the cap was reached (by anyone — including racing triggers), refund
+  // and bail. Exactly one concurrent caller may cross the cap, all others
+  // see it crossed and back out.
   const reservedTotal = await addToDailySpend(ctx, VISION_RESERVATION_USD);
-  if (reservedTotal - VISION_RESERVATION_USD >= maxSpend) {
-    // Cap was already reached before our reservation; refund and bail.
+  if (reservedTotal > maxSpend) {
     await addToDailySpend(ctx, -VISION_RESERVATION_USD);
     return null;
   }
@@ -253,7 +265,8 @@ export async function runTriage(
 
   const inEscalationBand =
     local.combinedScore >= low && local.combinedScore <= high;
-  const shouldEscalate = input.forceLlm || (useLlm && inEscalationBand);
+  const shouldEscalate =
+    !input.skipLlm && (input.forceLlm || (useLlm && inEscalationBand));
 
   let source: ScoreSource = "local";
   let llmScore: number | undefined;
