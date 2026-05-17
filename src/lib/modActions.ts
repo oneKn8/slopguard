@@ -39,16 +39,30 @@ export async function removeAsAi(
     .map(p => p.model)
     .join(", ");
 
-  const topReasoning = score.providers
+  const llmReasoning = score.providers
     .filter(p => !p.error)
     .map(p => p.reasoning)
     .filter(Boolean)
     .join(" | ");
 
+  // Local-only removals have no LLM providers. Fall back to the local
+  // signal evidence so the {{models}} / {{reason}} template slots aren't
+  // blank in the modnote / user-facing reply.
+  const localSignalNames = (score.localSignals?.perSignal ?? [])
+    .filter(s => s.score >= 0.4)
+    .map(s => s.name)
+    .join(", ");
+  const localReasoning = (score.topReasons ?? []).slice(0, 4).join(" | ");
+
+  const modelsLabel = successfulProviders || (localSignalNames
+    ? `local signals (${localSignalNames})`
+    : "local heuristics");
+  const reasonLabel = llmReasoning || localReasoning || "multi-signal heuristic match";
+
   const vars: TemplateVars = {
     score: score.finalScore.toFixed(2),
-    models: successfulProviders,
-    reason: topReasoning,
+    models: modelsLabel,
+    reason: reasonLabel,
     author: score.authorName,
     subreddit: subredditName,
   };

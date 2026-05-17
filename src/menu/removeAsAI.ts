@@ -1,7 +1,6 @@
 import type { Context, MenuItemOnPressEvent } from "@devvit/public-api";
-import { getScore } from "../redis.js";
-import { scoreItem } from "../ensemble/index.js";
-import { saveScore } from "../redis.js";
+import { getScore, saveScore } from "../redis.js";
+import { runTriage } from "../lib/triage.js";
 import { removeAsAi } from "../lib/modActions.js";
 
 export async function removeAsAiFromMenu(
@@ -19,18 +18,22 @@ export async function removeAsAiFromMenu(
 
   if (!score) {
     context.ui.showToast("Slopguard: no score yet — scoring before removal…");
-    let text = "";
+    let title = "";
+    let body = "";
+    let url: string | undefined;
     let authorName = "";
     let itemType: "post" | "comment" = "post";
 
     if (targetId.startsWith("t3_")) {
       const post = await context.reddit.getPostById(targetId);
-      text = [post.title, post.body].filter(Boolean).join("\n\n");
+      title = post.title ?? "";
+      body = post.body ?? "";
+      url = post.url;
       authorName = post.authorName;
       itemType = "post";
     } else if (targetId.startsWith("t1_")) {
       const comment = await context.reddit.getCommentById(targetId);
-      text = comment.body;
+      body = comment.body ?? "";
       authorName = comment.authorName;
       itemType = "comment";
     } else {
@@ -38,17 +41,26 @@ export async function removeAsAiFromMenu(
       return;
     }
 
-    score = await scoreItem(context, settings, {
+    const subredditName =
+      context.subredditName ?? (await context.reddit.getCurrentSubredditName());
+
+    // Local-first: route through runTriage, NOT scoreItem. This ensures the
+    // manual remove works even when no API keys are configured — local
+    // signals alone can justify a removal when they're strong enough.
+    score = await runTriage(context, settings, {
       itemId: targetId,
       itemType,
+      subredditName,
       authorName,
-      text,
-      forceEscalation: true,
+      title,
+      body,
+      url,
+      forceLlm: true, // mod manually invoked — pay for escalation if keys exist
     });
 
     if (!score) {
       context.ui.showToast(
-        "Slopguard: scoring failed — check API keys + spend cap.",
+        "Slopguard: scoring produced no result (text too short or user gated).",
       );
       return;
     }
