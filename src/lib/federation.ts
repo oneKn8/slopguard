@@ -84,7 +84,12 @@ async function readOutbox(
   try {
     const parsed = JSON.parse(raw) as FederationOutbox;
     if (!parsed || !Array.isArray(parsed.records)) return { records: [] };
-    return parsed;
+    // Per-record TTL filter on read. The Redis key has a 90-day TTL but
+    // every write refreshes it, so without this filter a long-running
+    // outbox could publish stale removals indefinitely.
+    const cutoff = Date.now() - RECORD_TTL_MS;
+    const fresh = parsed.records.filter(r => r.lastRemovedTs >= cutoff);
+    return { records: fresh };
   } catch {
     return { records: [] };
   }
@@ -94,7 +99,12 @@ async function writeOutbox(
   ctx: TriggerContext | Context,
   box: FederationOutbox,
 ): Promise<void> {
-  await ctx.redis.set(OUTBOX_KEY, JSON.stringify(box), {
+  // Prune-on-write — same per-record TTL semantics as the index. Keeps the
+  // stored shape bounded so disabling federation later leaves nothing
+  // unexpected behind.
+  const cutoff = Date.now() - RECORD_TTL_MS;
+  const fresh = box.records.filter(r => r.lastRemovedTs >= cutoff);
+  await ctx.redis.set(OUTBOX_KEY, JSON.stringify({ records: fresh }), {
     expiration: new Date(Date.now() + RECORD_TTL_MS),
   });
 }
@@ -297,10 +307,20 @@ export async function queryAuthor(
  * Read current outbox for audit display. Returns hashes only (never
  * un-hashed usernames). Use this in a menu action to let mods inspect
  * what will be published before they enable federation.
+ *
+ * Passive cleanup: when federation is disabled, this call also clears
+ * the outbox so disabling + auditing leaves nothing behind. Devvit doesn't
+ * fire a settings-change hook we can subscribe to, so the contract is
+ * "the outbox is cleared by the next interaction with it after disabling."
  */
 export async function auditOutbox(
   ctx: TriggerContext | Context,
+  settings?: Record<string, unknown>,
 ): Promise<FederationRecord[]> {
+  if (settings && !isEnabled(settings)) {
+    await clearOutbox(ctx);
+    return [];
+  }
   const box = await readOutbox(ctx);
   return box.records;
 }
@@ -338,7 +358,19 @@ export async function publishCycle(
   settings: Record<string, unknown>,
 ): Promise<{ ok: boolean; published: number; received: number; reason?: string }> {
   if (!isEnabled(settings)) {
-    return { ok: false, published: 0, received: 0, reason: "disabled" };
+    // Disabled-mode cleanup — if the mod toggled federation off after
+    // recordings landed in the outbox, this is when we drop them. Cheaper
+    // than running a dedicated settings-change hook (Devvit doesn't fire
+    // one we can listen to).
+    const cleared = await clearOutbox(ctx);
+    return {
+      ok: false,
+      published: 0,
+      received: 0,
+      reason: cleared > 0
+        ? `disabled — cleared ${cleared} stale outbox record(s)`
+        : "disabled",
+    };
   }
 
   const endpoint = (settings[AppSetting.FederationEndpoint] as string) ?? "";

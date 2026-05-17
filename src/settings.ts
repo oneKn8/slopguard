@@ -277,7 +277,7 @@ export function buildSettings(): SettingsFormField[] {
           name: AppSetting.EnableFederation,
           label: "Enable hashed bad-actor sharing across subs",
           helpText:
-            "When enabled, confirmed removals contribute hashed-only records to the federation outbox. Hashes are SHA-256 salted; usernames and content are never shared. You can audit the outbox at any time via 'Slopguard: Audit federation outbox' menu action. Toggling this off clears the local outbox immediately.",
+            "When enabled, confirmed removals contribute hashed-only records to the federation outbox. Hashes are SHA-256 salted; usernames and content are never shared. You can audit the outbox at any time via 'Slopguard: Audit federation outbox' menu action. Toggling this off stops new recordings immediately; the existing outbox is cleared by the next federation publish cycle, by opening the audit menu, or by the 'Slopguard: Clear federation outbox' menu action.",
           defaultValue: false,
         },
         {

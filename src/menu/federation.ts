@@ -15,7 +15,10 @@ export async function auditFederationFromMenu(
   context: Context,
 ): Promise<void> {
   const settings = await context.settings.getAll();
-  const records = await auditOutbox(context);
+  const records = await auditOutbox(
+    context,
+    settings as Record<string, unknown>,
+  );
   const lastPub = await lastPublishedAt(context);
 
   const lines: string[] = [];
