@@ -64,9 +64,24 @@ function normalizeUrl(url: string): string | undefined {
 }
 
 /**
- * Atomically record this itemId into the dup-key's sorted set and count
- * how many *other* items shared the same content in the window. Returns the
- * count of matches excluding the current item.
+ * Record this itemId into the dup-key's sorted set and count how many
+ * *other* items shared the same content in the window.
+ *
+ * Concurrency model — the operation order matters:
+ *   1. zAdd self                — atomic, globally ordered by Redis
+ *   2. zRange window members    — sees self + everyone added before self
+ *   3. count, excluding self    — duplicates are everyone-but-me
+ *   4. prune below cutoff + cap — cleanup
+ *
+ * Because zAdd is atomic and serialized by Redis, this is race-free under
+ * concurrent identical posts: whoever's zAdd lands first sees only itself
+ * in the range and reports 0 duplicates; subsequent submitters see the
+ * prior member(s) and report N. Two truly simultaneous adds both see each
+ * other and both report 1 — defensible: they ARE duplicates of each other.
+ *
+ * The earlier (prune → read → add) order was a multi-command race: two
+ * adds could both read empty before either zAdd, yielding 0 duplicates on
+ * both sides and missing the detection entirely.
  */
 async function recordAndCount(
   ctx: TriggerContext | Context,
@@ -75,29 +90,29 @@ async function recordAndCount(
   now: number,
   cutoff: number,
 ): Promise<number> {
-  // Prune anything older than the window. Atomic and bounded — older
-  // entries pre-cutoff are no longer relevant.
-  await ctx.redis.zRemRangeByScore(key, 0, cutoff);
-
-  // Read the current in-window members BEFORE adding self, so we don't
-  // count this item as its own duplicate.
-  const priorMembers = await ctx.redis.zRange(key, cutoff, "+inf", {
-    by: "score",
-  });
-  const matches = priorMembers.filter(m => m.member !== itemId).length;
-
-  // Add self. zAdd is atomic and idempotent on the member; if we re-fire
-  // for the same itemId (e.g. report trigger), the score updates rather
-  // than creating a duplicate slot.
+  // 1. Atomic add — establishes ordering with any concurrent caller.
   await ctx.redis.zAdd(key, { score: now, member: itemId });
 
-  // Hard cap at MAX_ENTRIES — drop the oldest if we exceeded.
-  await ctx.redis.zRemRangeByRank(key, 0, -MAX_ENTRIES - 1);
+  // 2. Read everyone in the window, including self.
+  const inWindow = await ctx.redis.zRange(key, cutoff, "+inf", {
+    by: "score",
+  });
 
-  // Refresh TTL so the key auto-evicts when no longer active.
+  // 3. Count duplicates = members in window minus self. Set-dedup the
+  //    members so a stray ghost re-add doesn't inflate the count.
+  const others = new Set<string>();
+  for (const m of inWindow) {
+    if (m.member !== itemId) others.add(m.member);
+  }
+
+  // 4. Cleanup — drop anything below the window cutoff, then enforce cap.
+  //    These are non-load-bearing for correctness; they just keep the
+  //    sorted-set bounded.
+  await ctx.redis.zRemRangeByScore(key, 0, cutoff);
+  await ctx.redis.zRemRangeByRank(key, 0, -MAX_ENTRIES - 1);
   await ctx.redis.expire(key, WINDOW_S);
 
-  return matches;
+  return others.size;
 }
 
 function scoreFromMatches(matches: number): number {
