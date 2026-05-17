@@ -8,7 +8,8 @@ import {
   incrUserFlag,
   markFlagCounted,
 } from "../redis.js";
-import { shouldSkipUser } from "../lib/gating.js";
+import { userGate } from "../lib/gating.js";
+import { isImagePostUrl } from "../lib/triage.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
 import { sendVerifyDm } from "../lib/verifyAuthor.js";
 import { pushToQueue } from "../customPost/queue.js";
@@ -29,8 +30,8 @@ export async function onPostCreate(
 
   const author = event.author?.name ?? "";
   if (!author) return;
-  const gate = await shouldSkipUser(context, settings, author);
-  if (gate.skip) {
+  const gate = await userGate(context, settings, author);
+  if (gate.skipCompletely) {
     console.log(`Slopguard: skip ${event.post.id} — ${gate.reason}`);
     return;
   }
@@ -38,7 +39,10 @@ export async function onPostCreate(
   const title = event.post.title ?? "";
   const body = event.post.selftext ?? "";
   const combined = `${title}\n\n${body}`.trim();
-  if (combined.length < 25) return;
+  // Length gate suppresses cheap heuristics on near-empty TEXT posts. Image
+  // posts can have short titles and still warrant a vision pass + OCR, so
+  // we don't short-circuit them here.
+  if (combined.length < 25 && !isImagePostUrl(event.post.url)) return;
 
   const subredditName =
     context.subredditName ??
@@ -52,6 +56,7 @@ export async function onPostCreate(
     title,
     body,
     url: event.post.url,
+    skipLlm: gate.skipLlm,
   });
 
   if (!score) return;

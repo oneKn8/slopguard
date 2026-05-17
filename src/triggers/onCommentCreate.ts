@@ -8,7 +8,7 @@ import {
   incrUserFlag,
   markFlagCounted,
 } from "../redis.js";
-import { shouldSkipUser } from "../lib/gating.js";
+import { userGate } from "../lib/gating.js";
 import { autoRemoveIfThreshold } from "../lib/modActions.js";
 import { sendVerifyDm } from "../lib/verifyAuthor.js";
 import { pushToQueue } from "../customPost/queue.js";
@@ -27,8 +27,8 @@ export async function onCommentCreate(
   const settings = await context.settings.getAll();
   const author = event.author?.name ?? "";
   if (!author) return;
-  const gate = await shouldSkipUser(context, settings, author);
-  if (gate.skip) return;
+  const gate = await userGate(context, settings, author);
+  if (gate.skipCompletely) return;
 
   const body = event.comment.body ?? "";
   if (body.trim().length < 25) return;
@@ -43,6 +43,7 @@ export async function onCommentCreate(
     subredditName,
     authorName: author,
     body,
+    skipLlm: gate.skipLlm,
   });
 
   if (!score) return;
