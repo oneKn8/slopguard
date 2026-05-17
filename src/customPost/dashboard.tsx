@@ -156,7 +156,8 @@ export function registerDashboard(): void {
               <text size="medium">No flagged items yet.</text>
               <text size="small" color="neutral-content-weak" wrap>
                 When Slopguard flags a post or comment, it'll appear here with
-                its score, signals, and a one-tap action link.
+                its score, top reasons, and per-signal breakdown. Use the
+                Slopguard menu actions on the underlying item to act.
               </text>
             </vstack>
           ) : (

@@ -82,36 +82,36 @@ slopguard/
 
 ## Data model (Redis)
 
-All keys are namespaced `sg:*`. Per-installation Redis is string KV only — no atomic ops.
+All keys are namespaced `sg:*`. Devvit Redis supports `SET NX`, atomic `INCRBY`, sorted sets (`zAdd`/`zRange`/`zRemRange*`), and key-level TTL — used throughout for concurrency-safe state.
 
 ```
 sg:score:{itemId}                  → JSON EnsembleScore (30-day TTL)
 sg:user:{username}                 → JSON UserHistory { flagCount, removedCount, lastFlagTs }
 sg:metrics:{YYYY-MM-DD}            → JSON DailyMetrics
-sg:spend:{YYYY-MM-DD}              → number — daily LLM spend tracker
-sg:lock:{itemId}                   → JSON CollisionLock { modName, claimedAt, expiresAt }
-sg:handled:{event}:{id}            → "1" — trigger dedup marker
-sg:flagged:{itemId}                → "1" — first-flag dedup marker (prevents double-counting user flags on report re-runs)
-sg:dup:txt:{sub}:{hash}            → JSON DupEntry[] — duplication signal (48h TTL)
-sg:dup:url:{sub}:{hash}            → JSON DupEntry[] — duplication signal (48h TTL)
+sg:spend:{YYYY-MM-DD}              → integer microcents (USD * 1e6), atomic via INCRBY
+sg:lock:{itemId}                   → JSON CollisionLock — atomic NX-claim, force-claim via second press
+sg:lock-force-intent:{id}:{mod}    → "1" — 60s force-claim intent marker
+sg:handled:{event}:{id}            → "1" — atomic NX trigger dedup
+sg:flagged:{itemId}                → "1" — atomic NX first-flag dedup
+sg:dup:txt:{sub}:{hash}            → ZSET (member=itemId, score=ts) — duplication, 48h sliding window
+sg:dup:url:{sub}:{hash}            → ZSET (member=itemId, score=ts) — duplication, 48h sliding window
 sg:verify:{itemId}                 → JSON VerifyRequest — verify-author ledger
 sg:verify-conv:{conversationId}    → string itemId — reverse index for ModMail trigger
-sg:queue:recent                    → JSON QueueEntry[] — recent-flagged for dashboard (capped 50, 7d TTL)
+sg:queue:recent                    → ZSET (member=itemId, score=ts) — dashboard queue, capped 50, 7d TTL
 sg:fed:outbox                      → JSON FederationOutbox — local-only until publish
-sg:fed:index                       → JSON FederationIndex — peer observations (idempotent per-cycle merge)
+sg:fed:index                       → JSON FederationIndex — peer observations, per-record TTL filter on read
 sg:fed:last-published              → number ms timestamp of last publish cycle
 ```
 
-## External API allowlist (devvit.yaml http)
+## External HTTP
 
-```yaml
-http:
-  - https://generativelanguage.googleapis.com   # Gemini text + vision
-  - https://api.anthropic.com                    # Claude Haiku 4.5
-  - https://api.openai.com                       # GPT-4o-mini
-  - https://discord.com                          # webhook notifications (when enabled)
-  # Plus the user-configured FederationEndpoint, when set
-```
+Devvit Classic 0.12.x uses `Devvit.configure({ http: true })` in `src/main.ts` for outbound HTTP — there is no per-domain allowlist in `devvit.yaml` for this Devvit version. Outbound endpoints used at runtime:
+
+- `https://generativelanguage.googleapis.com` — Gemini text + vision (BYOK)
+- `https://api.anthropic.com` — Claude Haiku 4.5 (BYOK, optional)
+- `https://api.openai.com` — GPT-4o-mini (BYOK, optional)
+- `https://discord.com` — webhook notifications, only when `DiscordWebhookUrl` is configured
+- User-configured `FederationEndpoint` — only when federation is enabled and the field is set
 
 ## Triage flow
 
@@ -160,8 +160,10 @@ EnsembleScore { finalScore, confidence, source, localScore, llmScore, localSigna
 
 - **Default = local-only, $0/month at any volume.**
 - **LLM escalation (opt-in)**: only fires when local combined score is in the gray band [0.4, 0.75]. Gemini Flash free tier (~1,500 req/day) covers most subs.
-- **Spend cap**: `MaxDailySpendUsd` Redis counter halts non-mandatory LLM calls once exceeded. Vision pass reserves `$0.001` up-front before fan-out to prevent burst-load from bypassing the cap.
-- **Gating**: karma threshold, approved-user skip, account-age skip, mod skip, daily spend cap.
+- **Spend cap**: `MaxDailySpendUsd` enforced via atomic `INCRBY` on integer microcents. Concurrent triggers all see a consistent post-increment total — whichever caller pushes the spend past the cap refunds its reservation. Vision pass reserves `$0.001` up-front before fan-out.
+- **Two-tier gating**: see `src/lib/gating.ts`.
+  - `skipCompletely` — system users, AutoModerator, mods, approved submitters. No detection runs.
+  - `skipLlm` — karma above threshold, account age above threshold. **Local signals still run** (wallet, contact, duplication, structural) because they're free and high-karma accounts can be compromised. Only LLM/vision escalation is suppressed.
 
 ## Privacy / federation framework
 
@@ -213,3 +215,10 @@ Stateful modules (duplication, history, behavioral, verifyAuthor, federation, qu
 3. **Explainability** at the signal level beats any single black-box score. Mods don't trust verdicts they can't audit.
 4. **Workflow-first** complements rather than replaces existing tools. Mods install it alongside Stop AI, AutoMod, and Toolbox.
 5. **Fairness by default** — non-native-English protection cap, verify-author appeal path, Advisory default — addresses the Stanford documented 61.22% FPR risk head-on.
+
+## Known limitations
+
+- **Daily spend cap is best-effort under burst load.** Atomic `INCRBY` guarantees no torn updates, and the first caller to cross the cap refunds. But under extreme concurrency (many triggers firing within the same Redis round-trip window), all callers can pass the pre-flight check, run, and *then* see the cap exceeded. Bounded by N * worst-case-call-cost; for Gemini Flash with default ~$1/day cap and ~$0.0005/call, overage is at most a few cents.
+- **Per-record JSON counters (UserHistory, DailyMetrics) use get-then-set.** Lost updates are possible under concurrent flags on the same author or same calendar day. Could be reworked to hash fields with `HINCRBY`; left as-is for MVP. Impact: occasional missed +1 on flagCount under heavy concurrent load; never affects flagging correctness.
+- **Federation transport assumes a trusted gateway** at the configured `FederationEndpoint`. Gateway responses are validated (record count, hex hashes, clamped removedCount, future-dated rejection), but a malicious gateway could still flood the index with realistic-looking fake observations to inflate or deflate a specific user's federated score. Default is dry-run (no endpoint) for this reason.
+- **Realtime broadcast is best-effort**; the Redis lock is the source of truth for collision prevention.

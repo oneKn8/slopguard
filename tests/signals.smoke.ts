@@ -9,7 +9,7 @@
 import { structuralSignal } from "../src/signals/structural.js";
 import { promoSignal } from "../src/signals/promo.js";
 import { contactSignal } from "../src/signals/contact.js";
-import { fuseLocalAndLlm } from "../src/lib/triage.js";
+import { fuseLocalAndLlm, isImagePostUrl } from "../src/lib/triage.js";
 import { shortHash } from "../src/lib/federation.js";
 import { normalizeCategory } from "../src/ensemble/replyClassifier.js";
 
@@ -193,6 +193,35 @@ for (const c of catCases) {
   } else {
     fails++;
     console.log(`  FAIL  normCat     ${(c.input ?? "(undefined)").padEnd(20)} -> ${got} (want ${c.expected})`);
+  }
+}
+
+// --------------- isImagePostUrl ---------------
+// Image-only posts with short titles must NOT be short-circuited by the
+// length gate in onPostCreate. The helper recognizes Reddit-hosted and
+// imgur image URLs so the trigger can preserve the vision path.
+
+console.log("\n--- isImagePostUrl ---");
+const imageUrlCases: { input: string | undefined; expected: boolean }[] = [
+  { input: "https://i.redd.it/abc123.jpg", expected: true },
+  { input: "https://preview.redd.it/abc.png?width=640", expected: true },
+  { input: "https://i.imgur.com/x9k2l.gif", expected: true },
+  { input: "https://example.com/photo.webp", expected: true },
+  { input: "https://example.com/photo.jpeg?q=80", expected: true },
+  { input: "https://reddit.com/r/test/comments/abc/hello", expected: false },
+  { input: "https://example.com/article", expected: false },
+  { input: undefined, expected: false },
+  { input: "", expected: false },
+];
+for (const c of imageUrlCases) {
+  const got = isImagePostUrl(c.input);
+  const label = (c.input ?? "(undefined)").slice(0, 40).padEnd(40);
+  if (got === c.expected) {
+    passes++;
+    console.log(`  PASS  imageUrl    ${label} -> ${got}`);
+  } else {
+    fails++;
+    console.log(`  FAIL  imageUrl    ${label} -> ${got} (want ${c.expected})`);
   }
 }
 
