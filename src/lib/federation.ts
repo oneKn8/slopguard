@@ -144,15 +144,39 @@ function deriveEntry(
 ): DerivedEntry | null {
   const perSrc = idx.obs[userHash];
   if (!perSrc) return null;
-  const srcKeys = Object.keys(perSrc);
-  if (srcKeys.length === 0) return null;
+  const cutoff = Date.now() - RECORD_TTL_MS;
   let total = 0;
   let lastSeen = 0;
-  for (const k of srcKeys) {
-    total += perSrc[k].count;
-    if (perSrc[k].lastTs > lastSeen) lastSeen = perSrc[k].lastTs;
+  let activeCommunities = 0;
+  for (const k of Object.keys(perSrc)) {
+    const obs = perSrc[k];
+    // Per-record TTL: stale observations no longer count toward the
+    // federated score. The key-level TTL is the floor; per-record cutoff
+    // is the contract.
+    if (obs.lastTs < cutoff) continue;
+    activeCommunities++;
+    total += obs.count;
+    if (obs.lastTs > lastSeen) lastSeen = obs.lastTs;
   }
-  return { totalRemovedCount: total, communities: srcKeys.length, lastSeen };
+  if (activeCommunities === 0) return null;
+  return { totalRemovedCount: total, communities: activeCommunities, lastSeen };
+}
+
+/**
+ * Drop observations older than RECORD_TTL_MS. Called on every index write
+ * so the stored shape stays bounded and stale reputation doesn't pile up.
+ */
+function pruneStaleObservations(idx: FederationIndex): FederationIndex {
+  const cutoff = Date.now() - RECORD_TTL_MS;
+  const next: FederationIndex = { obs: {} };
+  for (const [userHash, perSrc] of Object.entries(idx.obs)) {
+    const fresh: Record<string, PeerObservation> = {};
+    for (const [srcHash, obs] of Object.entries(perSrc)) {
+      if (obs.lastTs >= cutoff) fresh[srcHash] = obs;
+    }
+    if (Object.keys(fresh).length > 0) next.obs[userHash] = fresh;
+  }
+  return next;
 }
 
 async function readIndex(
@@ -180,7 +204,8 @@ async function writeIndex(
   ctx: TriggerContext | Context,
   idx: FederationIndex,
 ): Promise<void> {
-  await ctx.redis.set(INDEX_KEY, JSON.stringify(idx), {
+  const pruned = pruneStaleObservations(idx);
+  await ctx.redis.set(INDEX_KEY, JSON.stringify(pruned), {
     expiration: new Date(Date.now() + RECORD_TTL_MS),
   });
 }
