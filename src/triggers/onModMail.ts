@@ -90,11 +90,15 @@ export async function onModMail(
   const geminiKey = (settings[AppSetting.GeminiApiKey] as string) ?? "";
   if (!geminiKey) return;
 
-  // Only classify the FIRST reply. A hostile author can otherwise spam
-  // the conversation with long replies and burn the daily spend cap.
-  if (record.reply?.classification) {
+  // Only classify the FIRST reply per VerifyRequest. A hostile author can
+  // otherwise spam the conversation with long replies and burn the daily
+  // spend cap. The dedup is on the top-level `classifiedAt` rather than
+  // `reply.classification` because attachReplyByConversation overwrites
+  // the whole `reply` object on every new message — checking inside it
+  // would always look empty for the just-attached reply.
+  if (record.classifiedAt) {
     console.log(
-      `Slopguard: reply already classified for ${record.itemId}, skipping`,
+      `Slopguard: reply already classified for ${record.itemId} at ${new Date(record.classifiedAt).toISOString()}, skipping`,
     );
     return;
   }
@@ -123,15 +127,27 @@ export async function onModMail(
   await addToDailySpend(context, classification.costUsd);
 
   // Re-read in case anything else has touched the record concurrently, then
-  // write the classification back.
+  // write the classification back. Set BOTH the reply.classification (for
+  // the review card UI) and the top-level classifiedAt (the dedup marker).
   const latest = await readVerify(context, record.itemId);
   if (!latest || !latest.reply) return;
+  // Defense in depth: another concurrent onModMail invocation could have
+  // already classified — bail if so rather than double-charge.
+  if (latest.classifiedAt) {
+    console.log(
+      `Slopguard: classification raced for ${record.itemId}, refunding`,
+    );
+    await addToDailySpend(context, -classification.costUsd);
+    return;
+  }
+  const now = Date.now();
   latest.reply.classification = {
     category: classification.category,
     confidence: classification.confidence,
     reasoning: classification.reasoning,
-    classifiedAt: Date.now(),
+    classifiedAt: now,
   };
+  latest.classifiedAt = now;
   await writeVerify(context, latest);
   console.log(
     `Slopguard: reply classified as ${classification.category} (${(classification.confidence * 100).toFixed(0)}%) for ${record.itemId}`,

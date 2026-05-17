@@ -40,6 +40,13 @@ export interface VerifyRequest {
       classifiedAt: number;
     };
   };
+  /**
+   * Set once when the reply classifier runs successfully. Top-level (not
+   * on `reply`) so that overwriting `reply` with a follow-up message
+   * doesn't clear the dedup. Used by onModMail to enforce one-classify-
+   * per-VerifyRequest under hostile follow-up replies.
+   */
+  classifiedAt?: number;
   status: "sent" | "replied" | "send_failed";
 }
 
