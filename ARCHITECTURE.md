@@ -198,15 +198,16 @@ See `src/lib/federation.ts` header. In short:
 
 ## Testing
 
-`npm run test:smoke` runs 29 pure-function assertions covering:
+`npm run test:smoke` runs 38 pure-function assertions covering:
 - Structural: AI-text-heavy → ≥0.5, non-native-English → ≤0.25, clean casual → ≤0.2
 - Promo: scam-pump-wallet → ≥0.7, legit link → ≤0.15, crypto discussion without wallet → ≤0.15, lone shortener → 0.1–0.4
 - Contact: multi-channel scam → ≥0.7, Reddit @username mentions → ≤0.1, ISBN/order numbers → ≤0.2, single legit phone → 0.05–0.3
 - `fuseLocalAndLlm` ratchet (refuses to over-ride clean local with hallucinated high LLM)
 - `shortHash` stability + shape (32-hex / 128-bit)
 - `normalizeCategory` alias mapping + invalid inputs
+- `isImagePostUrl` URL classification (Reddit-hosted, imgur, extension-based, non-image, empty/undefined)
 
-Stateful modules (duplication, history, behavioral, verifyAuthor, federation, queue) require Devvit Redis and are exercised in playtest.
+Smoke tests are pure-function only — they do not exercise Redis state, concurrency, gating, modmail flow, federation outbox aging, or spend-cap edge cases. Stateful modules (duplication, history, behavioral, verifyAuthor, federation, queue, collision lock, spend tracking) require Devvit Redis and are exercised in playtest.
 
 ## Why this design
 
@@ -218,7 +219,8 @@ Stateful modules (duplication, history, behavioral, verifyAuthor, federation, qu
 
 ## Known limitations
 
-- **Daily spend cap is best-effort under burst load.** Atomic `INCRBY` guarantees no torn updates, and the first caller to cross the cap refunds. But under extreme concurrency (many triggers firing within the same Redis round-trip window), all callers can pass the pre-flight check, run, and *then* see the cap exceeded. Bounded by N * worst-case-call-cost; for Gemini Flash with default ~$1/day cap and ~$0.0005/call, overage is at most a few cents.
+- **Daily spend cap is a per-call soft cap, not a hard ledger.** Every LLM and vision call goes through `reserveAndCall` (atomic INCRBY reservation, post-reservation check, refund-if-over) so the cap is enforced *before* the external call fires. The remaining limitation is granularity: a single call whose actual cost overshoots its reservation can push the running total past the cap by ≤ the overshoot amount. Reservations are sized conservatively (Gemini Flash text $0.001 vs real ~$0.0001; Claude/OpenAI $0.002 vs ~$0.001; vision $0.001) so the bound is cents per day at the default $1 cap. A true hard ledger would need Redis transactions / Lua; deferred.
 - **Per-record JSON counters (UserHistory, DailyMetrics) use get-then-set.** Lost updates are possible under concurrent flags on the same author or same calendar day. Could be reworked to hash fields with `HINCRBY`; left as-is for MVP. Impact: occasional missed +1 on flagCount under heavy concurrent load; never affects flagging correctness.
 - **Federation transport assumes a trusted gateway** at the configured `FederationEndpoint`. Gateway responses are validated (record count, hex hashes, clamped removedCount, future-dated rejection), but a malicious gateway could still flood the index with realistic-looking fake observations to inflate or deflate a specific user's federated score. Default is dry-run (no endpoint) for this reason.
+- **Federation outbox cleanup on disable is passive, not push.** Devvit does not expose a settings-change hook we can subscribe to, so disabling federation stops new recordings immediately but the existing outbox is cleared on the next interaction with it (audit menu, scheduled publish cycle, or manual "Clear federation outbox" menu action). Settings help text and `federation.ts` header describe this lifecycle.
 - **Realtime broadcast is best-effort**; the Redis lock is the source of truth for collision prevention.

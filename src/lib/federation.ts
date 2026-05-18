@@ -19,9 +19,14 @@ import { AppSetting } from "../settings.js";
  *     subs see "2 other communities also removed this actor" without
  *     knowing which subs.
  *   - Mods can `audit` the outbox at any time before publish, and toggle
- *     off federation; toggling off immediately clears the local outbox.
+ *     federation off at any time. Toggling off stops new recordings
+ *     immediately; the existing outbox is cleared by the next interaction
+ *     with it (audit menu, scheduled publish cycle, or the manual "Clear
+ *     federation outbox" menu action). Devvit does not expose a settings-
+ *     change hook to clear synchronously on toggle.
  *   - Records auto-expire after 90 days so federated reputations don't
- *     last forever.
+ *     last forever. The TTL is enforced per-record (lastRemovedTs cutoff
+ *     on both read and write paths), not just at the key level.
  *
  * **Transport**: configurable endpoint. When `FederationEndpoint` is unset
  * the module operates in local-outbox-only mode (dry-run) — the framework
